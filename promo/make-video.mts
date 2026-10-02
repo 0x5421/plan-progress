@@ -268,8 +268,8 @@ function panelCard(t: number, style: StyleKey): string {
     const drawn = id === 'original' ? { svg: originalTrack({ ...plan(5, now), id: 'preview-original' }, TILE_W), height: ORIGINAL_H } : STYLES[id].draw({ ...plan(5, now), id: `preview-${id}` } as never, TILE_W, now, null)
     const preview = `<g transform="translate(12 ${ty + 10 + BTN_H + 8})">${slot(drawn, TILE_W, L.slotH)}</g>`
     return [
-      `<rect x="0" y="${ty}" width="${P_W}" height="${L.tileH}" rx="10" fill="${CARD}" stroke="${isCurrent ? CLAY : LINE}" stroke-width="${isCurrent ? 1.5 : 1}"/>`,
-      text(12, ty + 26, name, 13, { weight: 600, fill: isCurrent ? CLAY : INK }),
+      `<rect x="0" y="${ty}" width="${P_W}" height="${L.tileH}" rx="10" fill="${CARD}" stroke="${isCurrent ? INK : LINE}" stroke-width="${isCurrent ? 1.5 : 1}"/>`,
+      text(12, ty + 26, name, 13, { weight: 600, fill: INK }),
       text(12 + textW(name, 13) + 8, ty + 26, id, 11, { fill: MUTED }),
       button(b.x, b.y, isCurrent ? '✓ 使用中' : '使用', isCurrent),
       preview,
