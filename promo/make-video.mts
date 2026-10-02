@@ -213,13 +213,13 @@ function windowCard(t: number, style: StyleKey, gearHot: boolean): string {
 <g transform="translate(${CARD_X + PAD} ${y + PAD}) scale(${S})">${ui}</g>`
 }
 
-// a native-looking pane button; the current choice is filled
+// a native-looking pane button, black and white as the desktop draws them; the current choice is filled black
 const BTN_H = 22
 const btnW = (label: string) => Math.max(36, textW(label, 11.5) + 22)
 const button = (x: number, y: number, label: string, isOn: boolean) => {
   const w = btnW(label)
   return (
-    (isOn ? `<rect x="${x}" y="${y}" width="${w}" height="${BTN_H}" rx="6" fill="${CLAY}"/>` : `<rect x="${x}" y="${y}" width="${w}" height="${BTN_H}" rx="6" fill="${CARD}" stroke="${LINE}"/>`) +
+    (isOn ? `<rect x="${x}" y="${y}" width="${w}" height="${BTN_H}" rx="6" fill="${INK}"/>` : `<rect x="${x}" y="${y}" width="${w}" height="${BTN_H}" rx="6" fill="${CARD}" stroke="${LINE}"/>`) +
     text(x + w / 2, y + 15, label, 11.5, { fill: isOn ? '#FFFBF7' : INK, anchor: 'middle', weight: 500 })
   )
 }
