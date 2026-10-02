@@ -10,7 +10,21 @@ const plans = atom({ plugin: 'plan-progress', key: 'plans' } as const, [])
 const MAX_BARS = 3
 // a space as wide as a digit, so '  0%' and '100%' take the same room
 const FIGURE_SPACE = String.fromCharCode(0x2007)
+// whether the bars show; kept in $.store too, so hidden stays hidden across sessions and new bars
+// until the person shows them again
 const isOpen = atom({ plugin: 'plan-progress', key: 'isOpen' } as const, true)
+const SHOWN_STORE_KEY = 'isOpen'
+const setShown = async ($: EngineInterface, shown: boolean) => {
+  await update($, isOpen, () => shown)
+  await $.store.set(SHOWN_STORE_KEY, shown)
+}
+// whether the decision, error and done sounds play; kept in $.store the same way
+const soundsOn = atom({ plugin: 'plan-progress', key: 'sounds' } as const, true)
+const SOUNDS_STORE_KEY = 'sounds'
+const setSounds = async ($: EngineInterface, isOn: boolean) => {
+  await update($, soundsOn, () => isOn)
+  await $.store.set(SOUNDS_STORE_KEY, isOn)
+}
 const tick = atom({ plugin: 'plan-progress', key: 'tick' } as const, 0)
 // the chosen look; kept in $.store too so a new session starts with it
 const barStyle = atom({ plugin: 'plan-progress', key: 'style' } as const, DEFAULT_STYLE as string)
@@ -496,8 +510,12 @@ function drawBar(style: StyleId, p: Plan, W: number, now: number, v: { shown: Ag
 
 // ---------- engine glue ----------
 
-// the engine's player first (afplay on macOS); PowerShell where it cannot play
+// a sound the mod raises on its own: silent while the person has turned sounds off
 function play($: EngineInterface, name: 'decision' | 'error' | 'done') {
+  void read($, soundsOn).then(isOn => (isOn ? playNow($, name) : undefined))
+}
+// the engine's player first (afplay on macOS); PowerShell where it cannot play
+function playNow($: EngineInterface, name: 'decision' | 'error' | 'done') {
   const file = `${$.plugin.root}/sounds/${name}.wav`.replace(/\//g, '\\')
   void $.audio.play({ asset: `sounds/${name}.wav` }).catch(() =>
     $.process
@@ -544,7 +562,6 @@ async function putPlan($: EngineInterface, next: Plan) {
     return placeBar(list, next)
   })
   chime($, prev?.state, next.state)
-  if (!prev) await update($, isOpen, () => true)
 }
 
 // ---------- agents: drawn from engine events alone, no model calls ----------
@@ -789,6 +806,10 @@ export const register: Register = on => {
     if (isStyleId(saved)) await update($, barStyle, () => saved)
     const savedView = await $.store.get(AGENT_VIEW_STORE_KEY)
     if (isAgentView(savedView)) await update($, agentView, () => savedView)
+    const savedShown = await $.store.get(SHOWN_STORE_KEY)
+    if (typeof savedShown === 'boolean') await update($, isOpen, () => savedShown)
+    const savedSounds = await $.store.get(SOUNDS_STORE_KEY)
+    if (typeof savedSounds === 'boolean') await update($, soundsOn, () => savedSounds)
     $.clock.every(1000, async () => {
       // the hairline style shows elapsed time, so it redraws every second while a bar runs
       const isTiming = (await styleOf($)) === 'hairline' && (await read($, plans)).some(p => p.state !== 'done')
@@ -849,16 +870,17 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'progress' }, async $ => {
-    if ((await read($, plans)).length === 0) return { text: 'No plan yet. /progress-demo shows a sample.' }
     const open = await read($, isOpen)
-    await update($, isOpen, () => !open)
+    await setShown($, !open)
+    const hasBars = (await read($, plans)).length > 0
 
-    return { text: open ? 'Progress bars hidden.' : 'Progress bars shown.' }
+    return { text: `${open ? 'Progress bars hidden.' : 'Progress bars shown.'}${hasBars ? '' : ' No plan yet. /progress-demo shows a sample.'}` }
   })
 
   on('command.run', { command: 'progress-demo' }, async $ => {
     await putPlan($, DEMO(await $.clock.now()))
-    await update($, isOpen, () => true)
+    // asked for by the person, so it shows the bars again
+    await setShown($, true)
 
     return { text: 'Sample plan shown above the prompt.' }
   })
@@ -885,9 +907,10 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'progress-sounds' }, async $ => {
-    play($, 'decision')
-    $.clock.after(900, () => play($, 'error'))
-    $.clock.after(1800, () => play($, 'done'))
+    // asked for by the person, so it plays even with sounds off
+    playNow($, 'decision')
+    $.clock.after(900, () => playNow($, 'error'))
+    $.clock.after(1800, () => playNow($, 'done'))
 
     return { text: 'Sounds: decision, error, done.' }
   })
@@ -909,7 +932,8 @@ export const register: Register = on => {
     )
   })
 
-  // three settings, each a press away: whether the bars show, how subagents show, then one bordered tile per style with its preview
+  // four settings, each a press away: whether the bars show, whether sounds play, how subagents show,
+  // then one bordered tile per style with its preview
   on('ui.render', { component: 'Pane', requestId: STYLE_PANE }, async ($, e) => {
     const t = $.ui.resolve(e)
     const { Box, Button, Text } = t
@@ -917,6 +941,7 @@ export const register: Register = on => {
     const current = await styleOf($)
     const view = await agentViewOf($)
     const isShown = await read($, isOpen)
+    const isSounding = await read($, soundsOn)
     const now = await $.clock.now()
     const W = Math.max(200, Math.min(460, (e.props.bodyColumns || 50) * 8 - 24))
     // a tile's border and padding take about three columns
@@ -945,12 +970,26 @@ export const register: Register = on => {
                 key={shown ? 'bars-shown' : 'bars-hidden'}
                 variant={shown === isShown ? 'primary' : 'secondary'}
                 label={shown ? '顯示' : '隱藏'}
-                onPress={() => (shown === isShown ? undefined : update($, isOpen, () => shown))}
+                onPress={() => (shown === isShown ? undefined : setShown($, shown))}
               />
             ))}
             <Box flexGrow={1} />
             {/* every press in the pane already saved; this one only closes it */}
             <Button key="save-close" variant="primary" label="儲存並關閉" onPress={() => $.ui.close({ id: STYLE_PANE })} />
+          </Box>
+        </Box>
+
+        <Box flexDirection="column" gap={1}>
+          <Text bold>提示音</Text>
+          <Box key="sounds-row" flexDirection="row" alignItems="center" gap={1}>
+            {([true, false] as const).map(isOn => (
+              <Button
+                key={isOn ? 'sounds-on' : 'sounds-off'}
+                variant={isOn === isSounding ? 'primary' : 'secondary'}
+                label={isOn ? '開' : '關'}
+                onPress={() => (isOn === isSounding ? undefined : setSounds($, isOn))}
+              />
+            ))}
           </Box>
         </Box>
 
@@ -1082,14 +1121,11 @@ export const register: Register = on => {
       endedAt: null,
       depth: parentHome ? 1 : 0,
     }
-    let isNew = false
     await update($, plans, list => {
       if (list.some(p => p.id === home)) return list.map(p => (p.id === home ? addRun(p, run, e.parentAgentId, now) : p))
-      isNew = true
       const auto: Plan = { id: AGENTS, title: 'Agents', kind: 'todo', stages: [], state: 'running', note: null, startedAt: now }
       return placeBar(list, addRun(auto, run, undefined, now))
     })
-    if (isNew) await update($, isOpen, () => true)
 
     return started
   })

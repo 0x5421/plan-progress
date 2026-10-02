@@ -32,7 +32,10 @@ declare module 'claude-code' {
   interface PluginState {
     'plan-progress': {
       plans: Plan[]
+      // whether the bars show; also in $.store, so it holds across sessions
       isOpen: boolean
+      // whether the decision, error and done sounds play; also in $.store
+      sounds: boolean
       // bumped every second while agents run, so elapsed times and folding redraw
       tick: number
       // the bar style chosen with /progress-style, one of STYLE_IDS in hooks/styles.ts

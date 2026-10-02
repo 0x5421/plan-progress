@@ -3,8 +3,10 @@ import { expect, mock, test } from 'claude-code/testing'
 const SCROLL = { offset: 0, bodyRows: 40 }
 
 // the engine's own answers beneath the plugin: a fixed clock, an in-memory store, an empty drawing
-function engine(on: any, opts: { clock?: boolean } = {}) {
-  const store = new Map<string, unknown>()
+function engine(on: any, opts: { clock?: boolean; saved?: Record<string, unknown> } = {}) {
+  // what earlier sessions saved
+  const store = new Map<string, unknown>(Object.entries(opts.saved ?? {}))
+  const played: string[] = []
   const closed: string[] = []
   const opened: string[] = []
   const toasts: string[] = []
@@ -33,9 +35,12 @@ function engine(on: any, opts: { clock?: boolean } = {}) {
     return { value: undefined }
   })
   on('command.run', () => ({ text: '' }))
-  on('audio.play', () => ({ value: undefined }))
+  on('audio.play', (_$: unknown, e: { clip: { asset?: string } }) => {
+    played.push(String(e.clip.asset))
+    return { value: undefined }
+  })
   on('prompt.submit', (_$: unknown, e: { text: string }) => ({ text: e.text }))
-  return { store, closed, opened, toasts }
+  return { store, closed, opened, toasts, played }
 }
 const PANE = 'plan-progress-styles'
 const STYLES = ['segments', 'hairline', 'beads', 'ledger', 'transit', 'original']
@@ -205,4 +210,63 @@ test('the person\'s next message fades finished bars out, then removes them; run
   expect(after.rows).toEqual([false])
   expect(after.tree).toContain('working')
   expect(after.tree).not.toContain('"finished"')
+})
+
+const TOOL = 'mcp__plan-progress__plan_progress'
+const STAGES = [{ name: 'Build', steps: [{ title: 'one', status: 'active' }, { title: 'two', status: 'pending' }] }]
+const ABOVE = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120, scroll: SCROLL }
+const PANE_PROPS = { title: '進度條樣式', isFocused: true, bodyColumns: 50, placement: 'dock', scroll: SCROLL }
+const barCount = async ($: any) => {
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  const n = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '').length
+  await above.unmount()
+  return n
+}
+
+test('hidden bars stay hidden when a new bar starts, and the choice is saved', async ($, on) => {
+  const host = engine(on)
+  await $.tool.call({ tool: TOOL, id: 'first', title: 'first', stages: STAGES } as never)
+  const pane = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'Pane', requestId: PANE, props: PANE_PROPS as never })
+  await pane.press({ key: 'bars-hidden' })
+  expect(host.store.get('isOpen')).toBe(false)
+  // a new task used to show the bars again; now only the person does
+  await $.tool.call({ tool: TOOL, id: 'second', title: 'second', stages: STAGES } as never)
+  expect(await barCount($)).toBe(0)
+  await pane.press({ key: 'bars-shown' })
+  expect(host.store.get('isOpen')).toBe(true)
+  expect(await barCount($)).toBe(2)
+})
+
+test('a session starts with the bars hidden and sounds off when an earlier one saved that', async ($, on) => {
+  const host = engine(on, { saved: { isOpen: false, sounds: false } })
+  // a new session reads what the last one saved; the test stands for the engine beneath the plugin
+  on('session.start', () => ({ cwd: '/tmp' }))
+  on('tool.register', () => ({ value: undefined }))
+  on('command.register', () => ({ value: undefined }))
+  await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: TOOL, id: 'first', title: 'first', stages: STAGES } as never)
+  expect(await barCount($)).toBe(0)
+  const pane = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'Pane', requestId: PANE, props: PANE_PROPS as never })
+  expect((await pane.find({ key: 'bars-hidden' }))?.props.variant).toBe('primary')
+  expect((await pane.find({ key: 'sounds-off' }))?.props.variant).toBe('primary')
+  await $.tool.call({ tool: TOOL, id: 'first', state: 'done' } as never)
+  expect(host.played).toEqual([])
+})
+
+test('sounds play by default, the pane turns them off and on, and the choice is saved', async ($, on) => {
+  const host = engine(on)
+  const pane = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'Pane', requestId: PANE, props: PANE_PROPS as never })
+  expect((await pane.find({ key: 'sounds-on' }))?.props.variant).toBe('primary')
+  await $.tool.call({ tool: TOOL, id: 'a', title: 'a', stages: STAGES } as never)
+  await $.tool.call({ tool: TOOL, id: 'a', state: 'done' } as never)
+  expect(host.played).toEqual(['sounds/done.wav'])
+  await pane.press({ key: 'sounds-off' })
+  expect(host.store.get('sounds')).toBe(false)
+  await $.tool.call({ tool: TOOL, id: 'b', title: 'b', stages: STAGES } as never)
+  await $.tool.call({ tool: TOOL, id: 'b', state: 'error', note: 'x' } as never)
+  expect(host.played).toEqual(['sounds/done.wav'])
+  await pane.press({ key: 'sounds-on' })
+  expect(host.store.get('sounds')).toBe(true)
+  await $.tool.call({ tool: TOOL, id: 'b', state: 'done' } as never)
+  expect(host.played).toEqual(['sounds/done.wav', 'sounds/done.wav'])
 })
