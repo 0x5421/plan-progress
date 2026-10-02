@@ -6,6 +6,8 @@ const SCROLL = { offset: 0, bodyRows: 40 }
 function engine(on: any) {
   const store = new Map<string, unknown>()
   const closed: string[] = []
+  const opened: string[] = []
+  const toasts: string[] = []
   // calls on $ answer { value }; events (ui.render, command.run) answer their result
   on('clock.now', () => ({ value: 1_790_000_000_000 }))
   on('clock.every', () => ({ value: undefined }))
@@ -16,25 +18,62 @@ function engine(on: any) {
     return { value: undefined }
   })
   on('ui.render', () => ({ type: 'Box', props: {}, children: [] }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.open', (_$: unknown, e: { id: string }) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } }
+  })
   on('ui.close', (_$: unknown, e: { id: string }) => {
     closed.push(e.id)
     return { value: undefined }
   })
-  on('ui.toast', () => ({ value: undefined }))
+  on('ui.toast', (_$: unknown, e: { text: string }) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
   on('command.run', () => ({ text: '' }))
   on('audio.play', () => ({ value: undefined }))
-  return { store, closed }
+  on('ui.message', () => ({}))
+  return { store, closed, opened, toasts }
 }
 const PANE = 'plan-progress-styles'
 const STYLES = ['segments', 'hairline', 'beads', 'ledger', 'transit', 'original']
 
 for (const surface of ['desktop', 'terminal'] as const) {
-  test(`${surface}: the ⚙ button sits beside Progress`, async ($, on) => {
+  test(`${surface}: the footer draws "Progress ⚙" as plain text, no buttons`, async ($, on) => {
     engine(on)
     const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'SessionMode', props: { modes: [] } as never })
-    expect((await ui.find({ key: 'progress-style' }))?.text).toBe("\u2699\uFE0E")
-    expect(await ui.find({ key: 'progress-toggle' })).toBeDefined()
+    // a Button gets the desktop's native grey box, which also clipped the "g"
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    const footer = JSON.stringify(await ui.drawn({ in: 'progress-footer' }))
+    expect(footer).toContain('Progress')
+    expect(footer).toContain('⚙︎')
+    expect(footer).not.toContain('Button')
+  })
+
+  test(`${surface}: a click on ⚙ opens the style pane, a click on Progress toggles the bars`, async ($, on) => {
+    const host = engine(on)
+    const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'SessionMode', props: { modes: [] } as never })
+    // "Progress" takes columns 0-7, the space 8, the gear 9
+    await ui.pointer({ type: 'up', x: 9, y: 0, button: 'left', in: 'progress-footer' } as never)
+    expect(host.opened).toEqual([PANE])
+    // no bar yet: the label says how the mod works instead of toggling nothing
+    await ui.pointer({ type: 'up', x: 2, y: 0, button: 'left', in: 'progress-footer' } as never)
+    expect(host.toasts).toHaveLength(1)
+    expect(host.opened).toEqual([PANE])
+    // with a bar, the label hides it and shows it again
+    await $.command.run({ command: 'progress-demo' })
+    const props = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120, scroll: SCROLL }
+    const bars = async () => {
+      const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: props as never })
+      const n = (await above.findAll({ type: 'Svg' })).length
+      await above.unmount()
+      return n
+    }
+    expect(await bars()).toBe(1)
+    await ui.pointer({ type: 'up', x: 2, y: 0, button: 'left', in: 'progress-footer' } as never)
+    expect(await bars()).toBe(0)
+    await ui.pointer({ type: 'up', x: 2, y: 0, button: 'left', in: 'progress-footer' } as never)
+    expect(await bars()).toBe(1)
   })
 
   test(`${surface}: the pane lists every style and a press switches it`, async ($, on) => {

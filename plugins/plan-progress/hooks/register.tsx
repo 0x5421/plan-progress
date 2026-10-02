@@ -27,6 +27,15 @@ const setStyle = async ($: EngineInterface, id: StyleId) => {
 const STYLE_PANE = 'plan-progress-styles'
 const STYLE_PANE_TITLE = '進度條樣式'
 const PANE_ACCENT = '#D97757'
+
+// what the footer's two controls do: the label shows or hides the bars, the gear opens the style pane
+async function toggleBars($: EngineInterface) {
+  if ((await read($, plans)).length === 0) return $.ui.toast('plan-progress is on. A bar appears when Claude starts a task with several steps.')
+  await update($, isOpen, open => !open)
+}
+async function openStyles($: EngineInterface) {
+  return $.ui.open({ id: STYLE_PANE, title: STYLE_PANE_TITLE })
+}
 // the gear that opens the pane; U+FE0E asks for the plain text glyph, not the colour emoji
 const SETTINGS_GLYPH = '⚙︎'
 
@@ -855,25 +864,41 @@ export const register: Register = on => {
     return { text: 'Sounds: decision, error, done.' }
   })
 
-  // always drawn, so the person sees the mod is loaded; dim while there is nothing to show
+  // always drawn, so the person sees the mod is loaded; dim only while the person has hidden the bars
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
     const count = (await read($, plans)).length
     const open = await read($, isOpen)
-    const { Box, Button } = $.ui.resolve(e)
+    const t = $.ui.resolve(e)
+    const { Box, Button } = t
+    const Client = 'Client' in t ? t.Client : null
     // other mods add their labels to modes beneath us; keep them
     const below = await next(e)
-    const press = () =>
-      count === 0
-        ? $.ui.toast('plan-progress is on. A bar appears when Claude starts a task with several steps.')
-        : update($, isOpen, () => !open)
+    const label = count > 1 ? `Progress ${count}` : 'Progress'
+    const isDim = count > 0 && !open
 
     return (
       <Box flexDirection="row" alignItems="center" gap={1}>
-        <Button key="progress-toggle" dimColor={count === 0 || !open} label={count > 1 ? `Progress ${count}` : 'Progress'} onPress={press} />
-        <Button key="progress-style" plain dimColor label={SETTINGS_GLYPH} onPress={() => $.ui.open({ id: STYLE_PANE, title: STYLE_PANE_TITLE })} />
+        {Client
+          ? [<Client key="progress-footer" module="./footer.tsx" props={{ label, gear: SETTINGS_GLYPH, isDim }} />]
+          : [
+              <Button key="progress-toggle" dimColor={isDim} label={label} onPress={() => toggleBars($)} />,
+              <Button key="progress-style" plain dimColor label={SETTINGS_GLYPH} onPress={() => openStyles($)} />,
+            ]}
         {below}
       </Box>
     )
+  })
+
+  // the footer region's clicks: on the label it toggles the bars, on the gear it opens the style pane
+  on('ui.message', async ($, e, next) => {
+    if (e.element !== 'progress-footer') return next(e)
+    const action = (e.data as { action?: string } | null)?.action
+    if (action === 'toggle') await toggleBars($)
+    if (action === 'styles') {
+      const opened = await openStyles($)
+      if (!opened.isPlaced) $.ui.toast('樣式面板開不了：請把視窗拉寬，或輸入 /progress-style')
+    }
+    return {}
   })
 
   // two settings, each a press away: how subagents show, then one bordered tile per style with its preview
