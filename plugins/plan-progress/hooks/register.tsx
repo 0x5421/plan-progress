@@ -962,35 +962,37 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" gap={2}>
-        <Box flexDirection="column" gap={1}>
-          <Text bold>進度條</Text>
-          <Box key="bars-row" flexDirection="row" alignItems="center" gap={1}>
-            {([true, false] as const).map(shown => (
-              <Button
-                key={shown ? 'bars-shown' : 'bars-hidden'}
-                variant={shown === isShown ? 'primary' : 'secondary'}
-                label={shown ? '顯示' : '隱藏'}
-                onPress={() => (shown === isShown ? undefined : setShown($, shown))}
-              />
-            ))}
-            <Box flexGrow={1} />
-            {/* every press in the pane already saved; this one only closes it */}
-            <Button key="save-close" variant="primary" label="儲存並關閉" onPress={() => $.ui.close({ id: STYLE_PANE })} />
+        {/* the two on/off settings side by side; save and close stays at the top right */}
+        <Box key="settings-row" flexDirection="row" alignItems="flex-end" gap={3}>
+          <Box flexDirection="column" gap={1}>
+            <Text bold>進度條</Text>
+            <Box key="bars-row" flexDirection="row" alignItems="center" gap={1}>
+              {([true, false] as const).map(shown => (
+                <Button
+                  key={shown ? 'bars-shown' : 'bars-hidden'}
+                  variant={shown === isShown ? 'primary' : 'secondary'}
+                  label={shown ? '顯示' : '隱藏'}
+                  onPress={() => (shown === isShown ? undefined : setShown($, shown))}
+                />
+              ))}
+            </Box>
           </Box>
-        </Box>
-
-        <Box flexDirection="column" gap={1}>
-          <Text bold>提示音</Text>
-          <Box key="sounds-row" flexDirection="row" alignItems="center" gap={1}>
-            {([true, false] as const).map(isOn => (
-              <Button
-                key={isOn ? 'sounds-on' : 'sounds-off'}
-                variant={isOn === isSounding ? 'primary' : 'secondary'}
-                label={isOn ? '開' : '關'}
-                onPress={() => (isOn === isSounding ? undefined : setSounds($, isOn))}
-              />
-            ))}
+          <Box flexDirection="column" gap={1}>
+            <Text bold>提示音</Text>
+            <Box key="sounds-row" flexDirection="row" alignItems="center" gap={1}>
+              {([true, false] as const).map(isOn => (
+                <Button
+                  key={isOn ? 'sounds-on' : 'sounds-off'}
+                  variant={isOn === isSounding ? 'primary' : 'secondary'}
+                  label={isOn ? '開' : '關'}
+                  onPress={() => (isOn === isSounding ? undefined : setSounds($, isOn))}
+                />
+              ))}
+            </Box>
           </Box>
+          <Box flexGrow={1} />
+          {/* every press in the pane already saved; this one only closes it */}
+          <Button key="save-close" variant="primary" label="儲存並關閉" onPress={() => $.ui.close({ id: STYLE_PANE })} />
         </Box>
 
         <Box flexDirection="column" gap={1}>

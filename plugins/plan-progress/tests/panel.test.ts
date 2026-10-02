@@ -97,10 +97,12 @@ for (const surface of ['desktop', 'terminal'] as const) {
     await ui.press({ key: 'use-transit' })
     await ui.press({ key: 'agents-summary' })
     expect((await ui.find({ key: 'save-close' }))?.text).toBe('儲存並關閉')
-    // it sits on the pane's top row, beside 顯示／隱藏, last, after a spacer that pushes it to the right edge
-    const row = (await ui.find({ key: 'bars-row' }))?.children as { key?: string; type?: string; props?: Record<string, unknown> }[]
-    expect(row.map(c => (c.props?.key as string | undefined) ?? c.key ?? c.type)).toEqual(['bars-shown', 'bars-hidden', 'Box', 'save-close'])
+    // the top row holds 進度條 and 提示音 side by side, then a spacer that pushes save and close to the right edge
+    const row = (await ui.find({ key: 'settings-row' }))?.children as { key?: string; type?: string; props?: Record<string, unknown> }[]
+    expect(row.map(c => (c.props?.key as string | undefined) ?? c.key ?? c.type)).toEqual(['Box', 'Box', 'Box', 'save-close'])
     expect(row[2]?.props?.flexGrow).toBe(1)
+    const top = JSON.stringify(row)
+    for (const key of ['bars-shown', 'bars-hidden', 'sounds-on', 'sounds-off']) expect(top).toContain(key)
     expect((await ui.findAll({ key: 'save-close' })).length).toBe(1)
     await ui.press({ key: 'save-close' })
     expect(host.closed).toEqual([PANE])
