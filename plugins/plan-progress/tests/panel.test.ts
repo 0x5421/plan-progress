@@ -34,7 +34,6 @@ function engine(on: any, opts: { clock?: boolean } = {}) {
   })
   on('command.run', () => ({ text: '' }))
   on('audio.play', () => ({ value: undefined }))
-  on('ui.message', () => ({}))
   on('prompt.submit', (_$: unknown, e: { text: string }) => ({ text: e.text }))
   return { store, closed, opened, toasts }
 }
@@ -42,29 +41,22 @@ const PANE = 'plan-progress-styles'
 const STYLES = ['segments', 'hairline', 'beads', 'ledger', 'transit', 'original']
 
 for (const surface of ['desktop', 'terminal'] as const) {
-  test(`${surface}: the footer draws "Progress ⚙" as plain text, no buttons`, async ($, on) => {
+  test(`${surface}: the footer draws Progress and ⚙ as two buttons`, async ($, on) => {
     engine(on)
     const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'SessionMode', props: { modes: [] } as never })
-    // a Button gets the desktop's native grey box, which also clipped the "g"
-    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
-    const footer = JSON.stringify(await ui.drawn({ in: 'progress-footer' }))
-    expect(footer).toContain('Progress')
-    expect(footer).toContain('⚙︎')
-    expect(footer).not.toContain('Button')
-    // the region names its size: left to measure itself it drew nothing in the desktop footer (0.5.8)
-    const region = await ui.find({ key: 'progress-footer' })
-    expect(region?.props.width).toBe(11)
-    expect(region?.props.height).toBe(1)
+    // the desktop footer draws no Client region (0.5.7-0.5.9 showed nothing there), so these stay Buttons
+    expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
+    expect((await ui.find({ key: 'progress-toggle' }))?.text).toBe('Progress')
+    expect((await ui.find({ key: 'progress-style' }))?.text).toBe('\u2699\uFE0E')
   })
 
-  test(`${surface}: a click on ⚙ opens the style pane, a click on Progress toggles the bars`, async ($, on) => {
+  test(`${surface}: ⚙ opens the style pane, Progress toggles the bars`, async ($, on) => {
     const host = engine(on)
     const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'SessionMode', props: { modes: [] } as never })
-    // "Progress" takes columns 0-7, the space 8, the gear 9
-    await ui.pointer({ type: 'up', x: 9, y: 0, button: 'left', in: 'progress-footer' } as never)
+    await ui.press({ key: 'progress-style' })
     expect(host.opened).toEqual([PANE])
     // no bar yet: the label says how the mod works instead of toggling nothing
-    await ui.pointer({ type: 'up', x: 2, y: 0, button: 'left', in: 'progress-footer' } as never)
+    await ui.press({ key: 'progress-toggle' })
     expect(host.toasts).toHaveLength(1)
     expect(host.opened).toEqual([PANE])
     // with a bar, the label hides it and shows it again
@@ -77,9 +69,9 @@ for (const surface of ['desktop', 'terminal'] as const) {
       return n
     }
     expect(await bars()).toBe(1)
-    await ui.pointer({ type: 'up', x: 2, y: 0, button: 'left', in: 'progress-footer' } as never)
+    await ui.press({ key: 'progress-toggle' })
     expect(await bars()).toBe(0)
-    await ui.pointer({ type: 'up', x: 2, y: 0, button: 'left', in: 'progress-footer' } as never)
+    await ui.press({ key: 'progress-toggle' })
     expect(await bars()).toBe(1)
   })
 

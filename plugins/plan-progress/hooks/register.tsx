@@ -896,13 +896,13 @@ export const register: Register = on => {
     return { text: 'Sounds: decision, error, done.' }
   })
 
-  // always drawn, so the person sees the mod is loaded; dim only while the person has hidden the bars
+  // always drawn, so the person sees the mod is loaded; dim only while the person has hidden the bars.
+  // Plain Buttons: the desktop draws them with a native grey box, but its footer draws no Client
+  // region and no pressable Markdown link (0.5.7-0.5.10), so a Button is the one control that works there
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
     const count = (await read($, plans)).length
     const open = await read($, isOpen)
-    const t = $.ui.resolve(e)
-    const { Box, Button } = t
-    const Client = 'Client' in t ? t.Client : null
+    const { Box, Button } = $.ui.resolve(e)
     // other mods add their labels to modes beneath us; keep them
     const below = await next(e)
     const label = count > 1 ? `Progress ${count}` : 'Progress'
@@ -910,28 +910,11 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="row" alignItems="center" gap={1}>
-        {Client
-          ? // an explicit size: left to measure itself, the region showed nothing in the desktop footer
-            [<Client key="progress-footer" module="./footer.tsx" width={[...label].length + 3} height={1} props={{ label, gear: SETTINGS_GLYPH, isDim }} />]
-          : [
-              <Button key="progress-toggle" dimColor={isDim} label={label} onPress={() => toggleBars($)} />,
-              <Button key="progress-style" plain dimColor label={SETTINGS_GLYPH} onPress={() => openStyles($)} />,
-            ]}
+        <Button key="progress-toggle" dimColor={isDim} label={label} onPress={() => toggleBars($)} />
+        <Button key="progress-style" plain dimColor label={SETTINGS_GLYPH} onPress={() => openStyles($)} />
         {below}
       </Box>
     )
-  })
-
-  // the footer region's clicks: on the label it toggles the bars, on the gear it opens the style pane
-  on('ui.message', async ($, e, next) => {
-    if (e.element !== 'progress-footer') return next(e)
-    const action = (e.data as { action?: string } | null)?.action
-    if (action === 'toggle') await toggleBars($)
-    if (action === 'styles') {
-      const opened = await openStyles($)
-      if (!opened.isPlaced) $.ui.toast('樣式面板開不了：請把視窗拉寬，或輸入 /progress-style')
-    }
-    return {}
   })
 
   // two settings, each a press away: how subagents show, then one bordered tile per style with its preview
