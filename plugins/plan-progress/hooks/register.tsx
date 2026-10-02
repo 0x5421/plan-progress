@@ -40,7 +40,6 @@ const setStyle = async ($: EngineInterface, id: StyleId) => {
 // the pane that lists every style with a live preview; opened from the ⚙ beside the Progress button
 const STYLE_PANE = 'plan-progress-styles'
 const STYLE_PANE_TITLE = '進度條樣式'
-const PANE_ACCENT = '#D97757'
 
 // what the footer's gear does: it opens the style pane, where the bars are also shown or hidden
 async function openStyles($: EngineInterface) {
@@ -1019,12 +1018,13 @@ export const register: Register = on => {
             const isCurrent = id === current
             const drawn = inSlot(previews.get(id) ?? { svg: '', height: 0 }, tileW, previewSlotH, 'center')
             const name = STYLE_INFO[id].split('：')[0]
-            const frame = isCurrent ? { borderColor: PANE_ACCENT } : { borderDimColor: true }
+            // black and white like the pane's buttons: the current tile's border at full strength, the rest dim
+            const frame = isCurrent ? {} : { borderDimColor: true }
 
             return (
               <Box key={`style-${id}`} flexDirection="column" gap={1} borderStyle="round" paddingX={1} {...frame}>
                 <Box flexDirection="row" alignItems="center" gap={1}>
-                  <Text bold {...(isCurrent ? { color: PANE_ACCENT } : {})}>{name}</Text>
+                  <Text bold>{name}</Text>
                   <Text dimColor>{id}</Text>
                   <Box flexGrow={1} />
                   <Button
