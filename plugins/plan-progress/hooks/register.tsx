@@ -467,6 +467,15 @@ function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? '' : 's'}`
 }
 
+// a drawing placed in a fixed-height slot (centred or at the top), so previews of different heights take the same room
+function inSlot(drawn: { svg: string; height: number }, W: number, slotH: number, align: 'center' | 'top'): { svg: string; height: number } {
+  const dy = align === 'center' ? Math.max(0, (slotH - drawn.height) / 2) : 0
+  return {
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${slotH}" viewBox="0 0 ${W} ${slotH}"><g transform="translate(0 ${dy})">${drawn.svg}</g></svg>`,
+    height: slotH,
+  }
+}
+
 // one bar with its strips in the chosen style; the bar above the prompt and the pane's previews both draw through here
 function drawBar(style: StyleId, p: Plan, W: number, now: number, v: { shown: AgentRun[]; hidden: AgentRun[] } | null): { svg: string; height: number } {
   if (style !== 'original') return STYLES[style].draw(p, W, now, v)
@@ -882,7 +891,13 @@ export const register: Register = on => {
       { id: 'pa3', title: '比對打包大小', state: 'waiting', tool: 'Needs approval', startedAt: now - 9_000, endedAt: null, depth: 0 },
     ]
     const agentsSample = { ...DEMO(now), id: 'preview-agents', agents: sampleAgents }
-    const agentsDrawn = drawBar(current, agentsSample, W, now, applyAgentView({ shown: sampleAgents, hidden: [] }, view))
+    const allAgents = { shown: sampleAgents, hidden: [] }
+    // the slot keeps the expanded height in every mode, so switching modes never moves the list below
+    const agentsSlotH = drawBar(current, agentsSample, W, now, allAgents).height
+    const agentsDrawn = inSlot(drawBar(current, agentsSample, W, now, applyAgentView(allAgents, view)), W, agentsSlotH, 'top')
+    // every style's preview sits centred in one slot as tall as the tallest, so all tiles share one size
+    const previews = new Map(STYLE_IDS.map(id => [id, drawBar(id, { ...DEMO(now), id: `preview-${id}` }, tileW, now, null)] as const))
+    const previewSlotH = Math.max(...[...previews.values()].map(d => d.height))
 
     return (
       <Box flexDirection="column" gap={2}>
@@ -905,13 +920,12 @@ export const register: Register = on => {
           <Text bold>進度條樣式</Text>
           {STYLE_IDS.map(id => {
             const isCurrent = id === current
-            const sample = { ...DEMO(now), id: `preview-${id}` }
-            const drawn = drawBar(id, sample, tileW, now, null)
+            const drawn = inSlot(previews.get(id) ?? { svg: '', height: 0 }, tileW, previewSlotH, 'center')
             const name = STYLE_INFO[id].split('：')[0]
             const frame = isCurrent ? { borderColor: PANE_ACCENT } : { borderDimColor: true }
 
             return (
-              <Box key={`style-${id}`} flexDirection="column" gap={1} borderStyle="round" paddingX={1} {...frame}>
+              <Box key={`style-${id}`} flexDirection="column" gap={1} width={W} borderStyle="round" paddingX={1} {...frame}>
                 <Box flexDirection="row" alignItems="center" gap={1}>
                   <Text bold {...(isCurrent ? { color: PANE_ACCENT } : {})}>{name}</Text>
                   <Text dimColor>{id}</Text>

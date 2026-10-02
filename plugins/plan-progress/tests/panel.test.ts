@@ -86,6 +86,28 @@ for (const surface of ['desktop', 'terminal'] as const) {
   })
 }
 
+test('desktop: every style tile and preview has one size, and switching subagent modes keeps the height', async ($, on) => {
+  engine(on)
+  const props = { title: '進度條樣式', isFocused: true, bodyColumns: 50, placement: 'dock', scroll: SCROLL }
+  const ui = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'Pane', requestId: PANE, props: props as never })
+  // Svg carries no key: in document order the first is the subagent preview, the next six the style previews
+  const svgSizes = async () => (await ui.findAll({ type: 'Svg' })).map(el => `${el.props.width}x${el.props.height}`)
+  // a tile's height follows its content (one title row and the preview slot), so its width and the slot decide its size
+  const tileWidths = await Promise.all(STYLES.map(async id => (await ui.find({ key: `style-${id}` }))?.props.width))
+  expect(new Set(tileWidths).size).toBe(1)
+  expect(typeof tileWidths[0]).toBe('number')
+  const previews = (await svgSizes()).slice(1)
+  expect(previews.length).toBe(STYLES.length)
+  expect(new Set(previews).size).toBe(1)
+  expect(previews[0]).not.toContain('undefined')
+  const heights: string[] = []
+  for (const k of ['expanded', 'summary', 'hidden']) {
+    await ui.press({ key: `agents-${k}` })
+    heights.push((await svgSizes())[0] ?? 'missing')
+  }
+  expect(new Set(heights).size).toBe(1)
+})
+
 test('desktop: every style draws the bar above the prompt', async ($, on) => {
     engine(on)
   await $.command.run({ command: 'progress-demo' })
