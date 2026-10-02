@@ -41,25 +41,20 @@ const PANE = 'plan-progress-styles'
 const STYLES = ['segments', 'hairline', 'beads', 'ledger', 'transit', 'original']
 
 for (const surface of ['desktop', 'terminal'] as const) {
-  test(`${surface}: the footer draws Progress and ⚙ as two buttons`, async ($, on) => {
-    engine(on)
-    const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'SessionMode', props: { modes: [] } as never })
-    // the desktop footer draws no Client region (0.5.7-0.5.9 showed nothing there), so these stay Buttons
-    expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
-    expect((await ui.find({ key: 'progress-toggle' }))?.text).toBe('Progress')
-    expect((await ui.find({ key: 'progress-style' }))?.text).toBe('\u2699\uFE0E')
-  })
-
-  test(`${surface}: ⚙ opens the style pane, Progress toggles the bars`, async ($, on) => {
+  test(`${surface}: the footer draws one ⚙ button, which opens the style pane`, async ($, on) => {
     const host = engine(on)
     const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'SessionMode', props: { modes: [] } as never })
+    // the desktop footer draws no Client region (0.5.7-0.5.9 showed nothing there), so it stays a Button;
+    // one glyph keeps the desktop's grey box small
+    expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(1)
+    expect((await ui.find({ key: 'progress-style' }))?.text).toBe('\u2699\uFE0E')
     await ui.press({ key: 'progress-style' })
     expect(host.opened).toEqual([PANE])
-    // no bar yet: the label says how the mod works instead of toggling nothing
-    await ui.press({ key: 'progress-toggle' })
-    expect(host.toasts).toHaveLength(1)
-    expect(host.opened).toEqual([PANE])
-    // with a bar, the label hides it and shows it again
+  })
+
+  test(`${surface}: the pane shows and hides the bars`, async ($, on) => {
+    engine(on)
     await $.command.run({ command: 'progress-demo' })
     const props = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120, scroll: SCROLL }
     const bars = async () => {
@@ -68,10 +63,14 @@ for (const surface of ['desktop', 'terminal'] as const) {
       await above.unmount()
       return n
     }
+    const paneProps = { title: '進度條樣式', isFocused: true, bodyColumns: 50, placement: 'dock', scroll: SCROLL }
+    const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'Pane', requestId: PANE, props: paneProps as never })
+    expect((await ui.find({ key: 'bars-shown' }))?.props.variant).toBe('primary')
     expect(await bars()).toBe(1)
-    await ui.press({ key: 'progress-toggle' })
+    await ui.press({ key: 'bars-hidden' })
     expect(await bars()).toBe(0)
-    await ui.press({ key: 'progress-toggle' })
+    expect((await ui.find({ key: 'bars-hidden' }))?.props.variant).toBe('primary')
+    await ui.press({ key: 'bars-shown' })
     expect(await bars()).toBe(1)
   })
 
@@ -93,10 +92,10 @@ for (const surface of ['desktop', 'terminal'] as const) {
     await ui.press({ key: 'use-transit' })
     await ui.press({ key: 'agents-summary' })
     expect((await ui.find({ key: 'save-close' }))?.text).toBe('儲存並關閉')
-    // it sits on the same row as 展開／摘要／隱藏, last, after a spacer that pushes it to the right edge
-    const row = (await ui.find({ key: 'agents-row' }))?.children as { key?: string; type?: string; props?: Record<string, unknown> }[]
-    expect(row.map(c => (c.props?.key as string | undefined) ?? c.key ?? c.type)).toEqual(['agents-expanded', 'agents-summary', 'agents-hidden', 'Box', 'save-close'])
-    expect(row[3]?.props?.flexGrow).toBe(1)
+    // it sits on the pane's top row, beside 顯示／隱藏, last, after a spacer that pushes it to the right edge
+    const row = (await ui.find({ key: 'bars-row' }))?.children as { key?: string; type?: string; props?: Record<string, unknown> }[]
+    expect(row.map(c => (c.props?.key as string | undefined) ?? c.key ?? c.type)).toEqual(['bars-shown', 'bars-hidden', 'Box', 'save-close'])
+    expect(row[2]?.props?.flexGrow).toBe(1)
     expect((await ui.findAll({ key: 'save-close' })).length).toBe(1)
     await ui.press({ key: 'save-close' })
     expect(host.closed).toEqual([PANE])

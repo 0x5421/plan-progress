@@ -28,11 +28,7 @@ const STYLE_PANE = 'plan-progress-styles'
 const STYLE_PANE_TITLE = '進度條樣式'
 const PANE_ACCENT = '#D97757'
 
-// what the footer's two controls do: the label shows or hides the bars, the gear opens the style pane
-async function toggleBars($: EngineInterface) {
-  if ((await read($, plans)).length === 0) return $.ui.toast('plan-progress is on. A bar appears when Claude starts a task with several steps.')
-  await update($, isOpen, open => !open)
-}
+// what the footer's gear does: it opens the style pane, where the bars are also shown or hidden
 async function openStyles($: EngineInterface) {
   return $.ui.open({ id: STYLE_PANE, title: STYLE_PANE_TITLE })
 }
@@ -896,34 +892,31 @@ export const register: Register = on => {
     return { text: 'Sounds: decision, error, done.' }
   })
 
-  // always drawn, so the person sees the mod is loaded; dim only while the person has hidden the bars.
-  // Plain Buttons: the desktop draws them with a native grey box, but its footer draws no Client
-  // region and no pressable Markdown link (0.5.7-0.5.10), so a Button is the one control that works there
+  // always drawn, so the person sees the mod is loaded: one gear that opens the style pane.
+  // A Button: the desktop draws it with a native grey box, but its footer draws no Client
+  // region and no pressable Markdown link (0.5.7-0.5.10), so a Button is the one control that works there;
+  // one glyph keeps that box small and has no descender to clip
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
-    const count = (await read($, plans)).length
-    const open = await read($, isOpen)
     const { Box, Button } = $.ui.resolve(e)
     // other mods add their labels to modes beneath us; keep them
     const below = await next(e)
-    const label = count > 1 ? `Progress ${count}` : 'Progress'
-    const isDim = count > 0 && !open
 
     return (
       <Box flexDirection="row" alignItems="center" gap={1}>
-        <Button key="progress-toggle" dimColor={isDim} label={label} onPress={() => toggleBars($)} />
         <Button key="progress-style" plain dimColor label={SETTINGS_GLYPH} onPress={() => openStyles($)} />
         {below}
       </Box>
     )
   })
 
-  // two settings, each a press away: how subagents show, then one bordered tile per style with its preview
+  // three settings, each a press away: whether the bars show, how subagents show, then one bordered tile per style with its preview
   on('ui.render', { component: 'Pane', requestId: STYLE_PANE }, async ($, e) => {
     const t = $.ui.resolve(e)
     const { Box, Button, Text } = t
     const Svg = 'Svg' in t ? t.Svg : null
     const current = await styleOf($)
     const view = await agentViewOf($)
+    const isShown = await read($, isOpen)
     const now = await $.clock.now()
     const W = Math.max(200, Math.min(460, (e.props.bodyColumns || 50) * 8 - 24))
     // a tile's border and padding take about three columns
@@ -945,6 +938,23 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" gap={2}>
         <Box flexDirection="column" gap={1}>
+          <Text bold>進度條</Text>
+          <Box key="bars-row" flexDirection="row" alignItems="center" gap={1}>
+            {([true, false] as const).map(shown => (
+              <Button
+                key={shown ? 'bars-shown' : 'bars-hidden'}
+                variant={shown === isShown ? 'primary' : 'secondary'}
+                label={shown ? '顯示' : '隱藏'}
+                onPress={() => (shown === isShown ? undefined : update($, isOpen, () => shown))}
+              />
+            ))}
+            <Box flexGrow={1} />
+            {/* every press in the pane already saved; this one only closes it */}
+            <Button key="save-close" variant="primary" label="儲存並關閉" onPress={() => $.ui.close({ id: STYLE_PANE })} />
+          </Box>
+        </Box>
+
+        <Box flexDirection="column" gap={1}>
           <Text bold>Subagent 顯示</Text>
           <Box key="agents-row" flexDirection="row" alignItems="center" gap={1}>
             {AGENT_VIEWS.map(k => (
@@ -955,9 +965,6 @@ export const register: Register = on => {
                 onPress={() => (k === view ? undefined : setAgentView($, k))}
               />
             ))}
-            <Box flexGrow={1} />
-            {/* every press in the pane already saved; this one only closes it */}
-            <Button key="save-close" variant="primary" label="儲存並關閉" onPress={() => $.ui.close({ id: STYLE_PANE })} />
           </Box>
           {Svg ? [<Svg key="agents-preview" source={agentsDrawn.svg} alt={`subagents ${view} preview`} width={W} height={agentsDrawn.height} />] : []}
         </Box>
