@@ -32,7 +32,7 @@ const OUT_DIR = args.find(a => !a.startsWith('--')) ?? new URL('./out', import.m
 const FRAMES = STILLS ? `${OUT_DIR}/stills` : `${OUT_DIR}/frames`
 const W = 1080
 const H = 1920
-const FPS = 30
+const FPS = 60
 const DURATION = 20
 const S = 2 // UI drawn at 2x so it reads on a phone
 
@@ -95,6 +95,10 @@ function sampleAgents(now: number) {
 // a drawing placed centred in a fixed-height slot, as the pane does
 const slot = (d: { svg: string; height: number }, w: number, h: number) =>
   `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" overflow="visible"><g transform="translate(0 ${(h - d.height) / 2})">${d.svg}</g></svg>`
+// Claude Code swaps in a new picture whenever the plugin redraws, and the picture's animations (sweep, breathing,
+// blink) start over from zero; data-start marks when a drawing was last redrawn, so capture() runs its clock from there
+const drawnAt = (start: number, svg: string) => `<g data-start="${start}">${svg}</g>`
+const lastOf = (t: number, times: number[]) => Math.max(...times.filter(x => x <= t), 0)
 
 // ---------- timeline ----------
 const T = {
@@ -174,7 +178,9 @@ function windowCard(t: number, style: StyleKey, gearHot: boolean): string {
   const shift = collapsedAt(t) * BAR_ROW
   const leave = leavingAt(t)
   const rowO = 1 - ramp(t, T.sendClick + T.leave - 0.1, T.sendClick + T.leave + 0.05)
-  const bar = slot(look.draw(p as never, BAR_W, now, null), BAR_W, 36)
+  // the bar redraws when a step moves and when its style changes (none of the window's styles keeps a clock)
+  const stepMoves = [1, 2, 3, 4, 5].map(k => 2.2 + 0.85 * k)
+  const bar = drawnAt(lastOf(t, [T.uiIn, ...stepMoves, T.beadsClick, T.transitClick, T.stepTen, T.allDone]), slot(look.draw(p as never, BAR_W, now, null), BAR_W, 36))
   const glyph = look.glyph(p as never)
   const typed = typedAt(t)
   const isTyping = t >= T.inputClick && t < T.sendClick
@@ -261,12 +267,14 @@ function panelCard(t: number, style: StyleKey): string {
   const now = 1_790_000_000_000 + t * 1000
   const L = paneLayout(style, now)
   const closeX = P_W - btnW('儲存並關閉')
+  // the pane redraws when it opens and on every press in it
+  const paneDrawn = lastOf(t, [T.panelIn, T.beadsClick, T.transitClick])
   const tiles = PANE_STYLES.map(([id, name], i) => {
     const ty = L.tileY(i)
     const isCurrent = id === style
     const b = L.useBtn(i, isCurrent)
     const drawn = id === 'original' ? { svg: originalTrack({ ...plan(5, now), id: 'preview-original' }, TILE_W), height: ORIGINAL_H } : STYLES[id].draw({ ...plan(5, now), id: `preview-${id}` } as never, TILE_W, now, null)
-    const preview = `<g transform="translate(12 ${ty + 10 + BTN_H + 8})">${slot(drawn, TILE_W, L.slotH)}</g>`
+    const preview = `<g transform="translate(12 ${ty + 10 + BTN_H + 8})">${drawnAt(paneDrawn, slot(drawn, TILE_W, L.slotH))}</g>`
     return [
       `<rect x="0" y="${ty}" width="${P_W}" height="${L.tileH}" rx="10" fill="${CARD}" stroke="${isCurrent ? INK : LINE}" stroke-width="${isCurrent ? 1.5 : 1}"/>`,
       text(12, ty + 26, name, 13, { weight: 600, fill: INK }),
@@ -283,7 +291,7 @@ function panelCard(t: number, style: StyleKey): string {
     button(closeX, 22, '儲存並關閉', true),
     text(0, 77, 'Subagent 顯示', 13, { weight: 600 }),
     buttonRow(0, 86 - 4, ['展開', '摘要', '隱藏'], 0),
-    `<g transform="translate(0 ${L.agentsY + 8})">${L.agentsDrawn.svg}</g>`,
+    `<g transform="translate(0 ${L.agentsY + 8})">${drawnAt(paneDrawn, L.agentsDrawn.svg)}</g>`,
     text(0, L.listY + 4, '進度條樣式', 13, { weight: 600 }),
     ...tiles,
   ].join('')
@@ -403,7 +411,7 @@ async function capture(): Promise<void> {
       const ran = await send('Runtime.evaluate', {
         // every nested <svg> (each bar, each slot) keeps its own animation clock, so pause and seek all of them,
         // after the first draw: a fresh SVG ignores seeks until its timeline has started
-        expression: `(() => { document.body.innerHTML = ${JSON.stringify(svg)}; const all = [...document.querySelectorAll('svg')]; const tick = () => new Promise(r => requestAnimationFrame(() => r())); return tick().then(tick).then(() => { for (const s of all) { s.pauseAnimations(); s.setCurrentTime(${t}) } return tick().then(tick) }).then(() => all.length) })()`,
+        expression: `(() => { document.body.innerHTML = ${JSON.stringify(svg)}; const all = [...document.querySelectorAll('svg')]; const tick = () => new Promise(r => requestAnimationFrame(() => r())); return tick().then(tick).then(() => { for (const s of all) { const at = s.closest('[data-start]'); s.pauseAnimations(); s.setCurrentTime(Math.max(0, ${t} - (at ? Number(at.dataset.start) : 0))) } return tick().then(tick) }).then(() => all.length) })()`,
         awaitPromise: true,
         returnByValue: true,
       })
