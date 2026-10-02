@@ -58,7 +58,7 @@ claude plugin marketplace add 0x5421/plan-progress
 claude plugin install plan-progress@fork-zycck-mods
 ```
 
-倉庫是私人的，要先被加為協作者，而且本機的 git 要能讀到這個倉庫（例如已用 `gh auth login` 登入）。已經下載到本機的話，第一行改成 `claude plugin marketplace add /path/to/plan-progress`。
+已經下載到本機的話，第一行改成 `claude plugin marketplace add /path/to/plan-progress`。
 
 開一個新的 session 就會載入。
 
