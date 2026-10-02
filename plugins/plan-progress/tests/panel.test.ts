@@ -53,7 +53,11 @@ for (const surface of ['desktop', 'terminal'] as const) {
     // one glyph keeps the desktop's grey box small
     expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
     expect(await ui.findAll({ type: 'Button' })).toHaveLength(1)
-    expect((await ui.find({ key: 'progress-style' }))?.text).toBe('\u2699\uFE0E')
+    expect((await ui.find({ key: 'progress-style' }))?.text).toBe('\u2699\uFE0F')
+    // no labels after the gear: no gap, so it sits as far from the model name as the footer's own items
+    expect((await ui.drawn()).props.gap).toBe(0)
+    const withModes = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'SessionMode', props: { modes: ['focus'] } as never })
+    expect((await withModes.drawn()).props.gap).toBe(1)
     await ui.press({ key: 'progress-style' })
     expect(host.opened).toEqual([PANE])
   })

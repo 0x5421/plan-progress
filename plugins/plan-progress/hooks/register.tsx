@@ -46,8 +46,9 @@ const PANE_ACCENT = '#D97757'
 async function openStyles($: EngineInterface) {
   return $.ui.open({ id: STYLE_PANE, title: STYLE_PANE_TITLE })
 }
-// the gear that opens the pane; U+FE0E asks for the plain text glyph, not the colour emoji
-const SETTINGS_GLYPH = '⚙︎'
+// the gear that opens the pane; U+FE0F asks for the emoji, which fills the line's height,
+// where the plain text glyph drew small beside the model name
+const SETTINGS_GLYPH = '\u2699\uFE0F'
 
 // how subagent strips show under a bar: one strip each, one summary line, or none
 const AGENT_VIEWS = ['expanded', 'summary', 'hidden'] as const
@@ -924,8 +925,10 @@ export const register: Register = on => {
     // other mods add their labels to modes beneath us; keep them
     const below = await next(e)
 
+    // a gap only when other labels follow: with none, it left the gear one cell further
+    // from the model name than the footer's own spacing
     return (
-      <Box flexDirection="row" alignItems="center" gap={1}>
+      <Box flexDirection="row" alignItems="center" gap={e.props.modes.length > 0 ? 1 : 0}>
         <Button key="progress-style" plain dimColor label={SETTINGS_GLYPH} onPress={() => openStyles($)} />
         {below}
       </Box>
