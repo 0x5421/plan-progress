@@ -97,7 +97,15 @@ const slot = (d: { svg: string; height: number }, w: number, h: number) =>
   `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" overflow="visible"><g transform="translate(0 ${(h - d.height) / 2})">${d.svg}</g></svg>`
 // Claude Code swaps in a new picture whenever the plugin redraws, and the picture's animations (sweep, breathing,
 // blink) start over from zero; data-start marks when a drawing was last redrawn, so capture() runs its clock from there
-const drawnAt = (start: number, svg: string) => `<g data-start="${start}">${svg}</g>`
+// Claude Code shows each drawing as its own picture, but here a whole frame is one page, so the fixed ids inside
+// the drawings (segments' clip paths "s0", "f1", "sweep"…) would collide and one drawing would clip another;
+// every drawing gets its own prefix
+let drawingN = 0
+const scopeIds = (svg: string) => {
+  const k = `d${drawingN++}-`
+  return svg.replace(/\bid="([^"]+)"/g, `id="${k}$1"`).replace(/url\(#([^)]+)\)/g, `url(#${k}$1)`).replace(/href="#([^"]+)"/g, `href="#${k}$1"`)
+}
+const drawnAt = (start: number, svg: string) => `<g data-start="${start}">${scopeIds(svg)}</g>`
 const lastOf = (t: number, times: number[]) => Math.max(...times.filter(x => x <= t), 0)
 
 // ---------- timeline ----------
