@@ -33,6 +33,8 @@ declare module 'claude-code' {
       isOpen: boolean
       // bumped every second while agents run, so elapsed times and folding redraw
       tick: number
+      // the bar style chosen with /progress-style, one of STYLE_IDS in hooks/styles.ts
+      style: string
     }
   }
 }

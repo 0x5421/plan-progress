@@ -2,6 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRun, Plan, PlanStage, PlanState, PlanStep, StepStatus } from '../types'
+import { DEFAULT_STYLE, STYLE_IDS, STYLE_INFO, STYLES, isStyleId } from './styles'
+import type { StyleId } from './styles'
 
 const TOOL = 'mcp__plan-progress__plan_progress'
 const plans = atom({ plugin: 'plan-progress', key: 'plans' } as const, [])
@@ -10,6 +12,13 @@ const MAX_BARS = 3
 const FIGURE_SPACE = String.fromCharCode(0x2007)
 const isOpen = atom({ plugin: 'plan-progress', key: 'isOpen' } as const, true)
 const tick = atom({ plugin: 'plan-progress', key: 'tick' } as const, 0)
+// the chosen look; kept in $.store too so a new session starts with it
+const barStyle = atom({ plugin: 'plan-progress', key: 'style' } as const, DEFAULT_STYLE as string)
+const STYLE_STORE_KEY = 'style'
+const styleOf = async ($: EngineInterface): Promise<StyleId> => {
+  const v = await read($, barStyle)
+  return isStyleId(v) ? v : DEFAULT_STYLE
+}
 const STRIP_H = 18
 const STRIP_GAP = 3
 const MAX_STRIPS = 4 // past this, the finished ones fold into one "+N more" strip
@@ -398,7 +407,8 @@ function stripsSvg(v: { shown: AgentRun[]; hidden: AgentRun[] }, W: number, now:
         `<text x="10" y="${y + 12.5}" class="sn st">+${plural(v.hidden.length, 'more agent')} · ${doneCount} done</text>`,
     )
   }
-  return `<style>.sn{font:400 11.5px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#F0EEFC}.st{fill-opacity:.65}
+  return `<style>.sn{font:400 11.5px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#1F1E1C}.st{fill-opacity:.65}
+@media (prefers-color-scheme:dark){.sn{fill:#F0EEFC}}
 .sd{animation:sp 1.1s ease-in-out infinite}@keyframes sp{50%{opacity:.3}}
 .mi{animation:mi ${MORPH} ease-out both}@keyframes mi{from{opacity:0;filter:blur(3px)}}
 .mo{animation:mo ${MORPH} ease-in both}@keyframes mo{to{opacity:0;filter:blur(3px)}}
@@ -668,10 +678,15 @@ export const register: Register = on => {
         },
       },
     })
+    const saved = await $.store.get(STYLE_STORE_KEY)
+    if (isStyleId(saved)) await update($, barStyle, () => saved)
     $.clock.every(1000, async () => {
-      if (agentHome.size > 0 || (await $.clock.now()) < foldUntil) await update($, tick, n => n + 1)
+      // the hairline style shows elapsed time, so it redraws every second while a bar runs
+      const isTiming = (await styleOf($)) === 'hairline' && (await read($, plans)).some(p => p.state !== 'done')
+      if (isTiming || agentHome.size > 0 || (await $.clock.now()) < foldUntil) await update($, tick, n => n + 1)
     })
     await $.command.register({ name: 'progress', description: 'Show or hide the progress bars' })
+    await $.command.register({ name: 'progress-style', description: 'Switch the progress bar style (no argument lists them, "next" cycles)' })
     await $.command.register({ name: 'progress-demo', description: 'Show a sample plan in the progress bars' })
     await $.command.register({ name: 'progress-sounds', description: 'Play the decision, error and done sounds' })
     await $.command.register({ name: 'progress-clear', description: 'Remove all progress bars' })
@@ -739,6 +754,19 @@ export const register: Register = on => {
     return { text: 'Sample plan shown above the prompt.' }
   })
 
+  on('command.run', { command: 'progress-style' }, async ($, e) => {
+    const current = await styleOf($)
+    const arg = e.args.trim().toLowerCase()
+    const list = STYLE_IDS.map(id => `${id === current ? '▸' : ' '} ${id.padEnd(9)} ${STYLE_INFO[id]}`).join('\n')
+    if (!arg) return { text: `目前風格：${current}\n${list}\n\n用法：/progress-style <名稱>，或 /progress-style next 換下一個` }
+    const nextId = arg === 'next' ? STYLE_IDS[(STYLE_IDS.indexOf(current) + 1) % STYLE_IDS.length] : arg
+    if (!isStyleId(nextId)) return { text: `沒有「${arg}」這個風格。\n${list}` }
+    await update($, barStyle, () => nextId)
+    await $.store.set(STYLE_STORE_KEY, nextId)
+    const hasBars = (await read($, plans)).length > 0
+    return { text: `已切換到 ${nextId}：${STYLE_INFO[nextId]}${hasBars ? '' : '\n現在沒有進度條，用 /progress-demo 看樣子。'}` }
+  })
+
   on('command.run', { command: 'progress-clear' }, async $ => {
     await update($, plans, () => [])
 
@@ -784,7 +812,10 @@ export const register: Register = on => {
     // so rows line up whatever their titles; the slack goes into the gap after the title.
     // Desktop reports ~8 CSS px per column; glyph, gaps, percent and the close button take ~126 px.
     const titleWidth = Math.min(Math.round(total * 0.3), Math.max(...list.map(p => Math.round(textWidth(p.title, 6.4)))))
-    const trackW = Math.max(120, Math.min(1400, total - titleWidth - 140))
+    const style = await styleOf($)
+    const look = style === 'original' ? null : STYLES[style]
+    // the hairline's elapsed time is wider than a percent
+    const trackW = Math.max(120, Math.min(1400, total - titleWidth - 140 - (style === 'hairline' ? 18 : 0)))
     await read($, tick)
     const now = await $.clock.now()
     // a hairline between task bars, so each bar and its agent strips read as one group
@@ -795,9 +826,15 @@ export const register: Register = on => {
         {list.flatMap((p, i) => {
           const v = visibleAgents(p, now)
           const stripsH = v ? 5 + stripsHeight(v.shown.length + (v.hidden.length > 0 ? 1 : 0)) : 0
-          const source = v
-            ? `<svg xmlns="http://www.w3.org/2000/svg" width="${trackW}" height="${TRACK_H + stripsH}">${trackSvg(p, trackW)}<g transform="translate(0 ${TRACK_H + 5})">${stripsSvg(v, trackW, now)}</g></svg>`
-            : trackSvg(p, trackW)
+          const drawn = look
+            ? look.draw(p, trackW, now, v)
+            : {
+                svg: v
+                  ? `<svg xmlns="http://www.w3.org/2000/svg" width="${trackW}" height="${TRACK_H + stripsH}">${trackSvg(p, trackW)}<g transform="translate(0 ${TRACK_H + 5})">${stripsSvg(v, trackW, now)}</g></svg>`
+                  : trackSvg(p, trackW),
+                height: TRACK_H + stripsH,
+              }
+          const glyph = look ? look.glyph(p) : { char: STATE_GLYPH[p.state], color: STATE_COLOR[p.state] }
           const agentsAlt = v ? `; agents: ${(p.agents ?? []).map(a => `${a.title} ${a.state}`).join(', ')}` : ''
           const line = i > 0 && Svg ? [<Svg key={`div-${p.id}`} source={divider} alt="" width={total} height={1} />] : []
           const w = where(p)
@@ -812,12 +849,12 @@ export const register: Register = on => {
 
           return [
             ...line,
-            <Box key={`bar-${p.id}`} flexDirection="row" alignItems={v ? 'flex-start' : 'center'} gap={1}>
-              <Text color={color}>{STATE_GLYPH[p.state]}</Text>
+            <Box key={`bar-${p.id}`} flexDirection="row" alignItems={v || drawn.height > TRACK_H ? 'flex-start' : 'center'} gap={1}>
+              {glyph ? [<Text key="glyph" color={glyph.color}>{glyph.char}</Text>] : []}
               <Text wrap="truncate">{p.title}</Text>
               <Box flexGrow={1} />
               {Svg ? (
-                <Svg source={source} alt={alt} width={trackW} height={TRACK_H + stripsH} />
+                <Svg source={drawn.svg} alt={alt} width={trackW} height={drawn.height} />
               ) : (
                 <Text>
                   <Text color={color}>{bar.replace(/─/g, '')}</Text>
@@ -825,7 +862,7 @@ export const register: Register = on => {
                   <Text color={color}>{` ${stageName} ${w.step}/${w.stageSize}`}</Text>
                 </Text>
               )}
-              <Text dimColor>{`${String(pct).padStart(3, FIGURE_SPACE)}%`}</Text>
+              <Text dimColor>{look && Svg ? look.right(p, now) : `${String(pct).padStart(3, FIGURE_SPACE)}%`}</Text>
               <Button key={`close-${p.id}`} plain dimColor label="✕" onPress={() => dropPlan($, p.id)} />
             </Box>,
           ]
