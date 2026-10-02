@@ -232,7 +232,9 @@ async function capture(): Promise<void> {
       const svg = frame(t)
       // SMIL animations (sweep, breathing head) are paused and set to this frame's time, so every frame is exact
       const ran = await send('Runtime.evaluate', {
-        expression: `(() => { document.body.innerHTML = ${JSON.stringify(svg)}; const s = document.querySelector('svg'); s.pauseAnimations(); s.setCurrentTime(${t}); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(s.getBBox().height)))) })()`,
+        // every nested <svg> (each bar, each slot) keeps its own animation clock, so pause and seek all of them,
+        // after the first draw: a fresh SVG ignores seeks until its timeline has started
+        expression: `(() => { document.body.innerHTML = ${JSON.stringify(svg)}; const all = [...document.querySelectorAll('svg')]; const tick = () => new Promise(r => requestAnimationFrame(() => r())); return tick().then(tick).then(() => { for (const s of all) { s.pauseAnimations(); s.setCurrentTime(${t}) } return tick().then(tick) }).then(() => all.length) })()`,
         awaitPromise: true,
         returnByValue: true,
       })
