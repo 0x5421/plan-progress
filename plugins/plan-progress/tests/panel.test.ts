@@ -55,6 +55,11 @@ for (const surface of ['desktop', 'terminal'] as const) {
     await ui.press({ key: 'use-transit' })
     await ui.press({ key: 'agents-summary' })
     expect((await ui.find({ key: 'save-close' }))?.text).toBe('儲存並關閉')
+    // it sits on the same row as 展開／摘要／隱藏, last, after a spacer that pushes it to the right edge
+    const row = (await ui.find({ key: 'agents-row' }))?.children as { key?: string; type?: string; props?: Record<string, unknown> }[]
+    expect(row.map(c => (c.props?.key as string | undefined) ?? c.key ?? c.type)).toEqual(['agents-expanded', 'agents-summary', 'agents-hidden', 'Box', 'save-close'])
+    expect(row[3]?.props?.flexGrow).toBe(1)
+    expect((await ui.findAll({ key: 'save-close' })).length).toBe(1)
     await ui.press({ key: 'save-close' })
     expect(host.closed).toEqual([PANE])
     expect(host.store.get('style')).toBe('transit')

@@ -903,7 +903,7 @@ export const register: Register = on => {
       <Box flexDirection="column" gap={2}>
         <Box flexDirection="column" gap={1}>
           <Text bold>Subagent 顯示</Text>
-          <Box flexDirection="row" gap={1}>
+          <Box key="agents-row" flexDirection="row" alignItems="center" gap={1}>
             {AGENT_VIEWS.map(k => (
               <Button
                 key={`agents-${k}`}
@@ -912,6 +912,9 @@ export const register: Register = on => {
                 onPress={() => (k === view ? undefined : setAgentView($, k))}
               />
             ))}
+            <Box flexGrow={1} />
+            {/* every press in the pane already saved; this one only closes it */}
+            <Button key="save-close" variant="primary" label="儲存並關閉" onPress={() => $.ui.close({ id: STYLE_PANE })} />
           </Box>
           {Svg ? [<Svg key="agents-preview" source={agentsDrawn.svg} alt={`subagents ${view} preview`} width={W} height={agentsDrawn.height} />] : []}
         </Box>
@@ -942,11 +945,6 @@ export const register: Register = on => {
               </Box>
             )
           })}
-        </Box>
-
-        {/* every press above already saved; this one only closes the pane */}
-        <Box flexDirection="row" justifyContent="flex-end">
-          <Button key="save-close" variant="primary" label="儲存並關閉" onPress={() => $.ui.close({ id: STYLE_PANE })} />
         </Box>
       </Box>
     )
