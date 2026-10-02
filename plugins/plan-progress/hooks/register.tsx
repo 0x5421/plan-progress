@@ -19,6 +19,13 @@ const styleOf = async ($: EngineInterface): Promise<StyleId> => {
   const v = await read($, barStyle)
   return isStyleId(v) ? v : DEFAULT_STYLE
 }
+const setStyle = async ($: EngineInterface, id: StyleId) => {
+  await update($, barStyle, () => id)
+  await $.store.set(STYLE_STORE_KEY, id)
+}
+// the pane that lists every style with a live preview; opened from the ▾ beside the Progress button
+const STYLE_PANE = 'plan-progress-styles'
+const STYLE_PANE_TITLE = '進度條樣式'
 const STRIP_H = 18
 const STRIP_GAP = 3
 const MAX_STRIPS = 4 // past this, the finished ones fold into one "+N more" strip
@@ -638,7 +645,7 @@ export const register: Register = on => {
     if (e.stop_hook_active || result.block || isWaitingOnBackground || (e.background_tasks?.length ?? 0) > 0) return result
     const open = (await read($, plans)).filter(isOpenPlan)
     if (open.length === 0) return result
-    const asks = /\?\s*$/.test(e.last_assistant_message ?? '')
+    const asks = /[?？]\s*$/.test(e.last_assistant_message ?? '')
     if (asks) {
       const last = open[open.length - 1]
       if (last) await putPlan($, { ...last, state: 'needs_input' })
@@ -758,11 +765,13 @@ export const register: Register = on => {
     const current = await styleOf($)
     const arg = e.args.trim().toLowerCase()
     const list = STYLE_IDS.map(id => `${id === current ? '▸' : ' '} ${id.padEnd(9)} ${STYLE_INFO[id]}`).join('\n')
-    if (!arg) return { text: `目前風格：${current}\n${list}\n\n用法：/progress-style <名稱>，或 /progress-style next 換下一個` }
+    if (!arg) {
+      await $.ui.open({ id: STYLE_PANE, title: STYLE_PANE_TITLE })
+      return { text: `目前風格：${current}（已打開樣式面板）\n${list}\n\n用法：/progress-style <名稱>，或 /progress-style next 換下一個` }
+    }
     const nextId = arg === 'next' ? STYLE_IDS[(STYLE_IDS.indexOf(current) + 1) % STYLE_IDS.length] : arg
     if (!isStyleId(nextId)) return { text: `沒有「${arg}」這個風格。\n${list}` }
-    await update($, barStyle, () => nextId)
-    await $.store.set(STYLE_STORE_KEY, nextId)
+    await setStyle($, nextId)
     const hasBars = (await read($, plans)).length > 0
     return { text: `已切換到 ${nextId}：${STYLE_INFO[nextId]}${hasBars ? '' : '\n現在沒有進度條，用 /progress-demo 看樣子。'}` }
   })
@@ -796,7 +805,49 @@ export const register: Register = on => {
     return (
       <Box flexDirection="row" alignItems="center" gap={1}>
         <Button key="progress-toggle" dimColor={count === 0 || !open} label={count > 1 ? `Progress ${count}` : 'Progress'} onPress={press} />
+        <Button key="progress-style" plain dimColor label="▾" onPress={() => $.ui.open({ id: STYLE_PANE, title: STYLE_PANE_TITLE })} />
         {below}
+      </Box>
+    )
+  })
+
+  // every style drawn on the demo plan; a press switches the bars at once
+  on('ui.render', { component: 'Pane', requestId: STYLE_PANE }, async ($, e) => {
+    const t = $.ui.resolve(e)
+    const { Box, Button, Text } = t
+    const Svg = 'Svg' in t ? t.Svg : null
+    const current = await styleOf($)
+    const now = await $.clock.now()
+    const W = Math.max(200, Math.min(420, (e.props.bodyColumns || 50) * 8 - 24))
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text dimColor>點一個樣式，進度條馬上換成那個樣子，下次開 session 也會沿用。</Text>
+        {STYLE_IDS.map(id => {
+          const isCurrent = id === current
+          const look = id === 'original' ? null : STYLES[id]
+          const sample = { ...DEMO(now), id: `preview-${id}` }
+          const drawn = look ? look.draw(sample, W, now, null) : { svg: trackSvg(sample, W), height: TRACK_H }
+          const [name, ...rest] = STYLE_INFO[id].split('：')
+
+          return (
+            <Box key={`style-${id}`} flexDirection="column" gap={0}>
+              <Box flexDirection="row" alignItems="center" gap={1}>
+                <Text bold={isCurrent}>{`${isCurrent ? '✓ ' : ''}${name} ${id}`}</Text>
+                <Box flexGrow={1} />
+                <Button
+                  key={`use-${id}`}
+                  dimColor={isCurrent}
+                  label={isCurrent ? '使用中' : '使用'}
+                  onPress={() => (isCurrent ? undefined : setStyle($, id))}
+                />
+              </Box>
+              <Text dimColor wrap="wrap">{rest.join('：')}</Text>
+              {Svg ? [<Svg key={`preview-${id}`} source={drawn.svg} alt={`${id} preview`} width={W} height={drawn.height} />] : []}
+            </Box>
+          )
+        })}
+        <Button key="close-styles" plain dimColor label="關閉" onPress={() => $.ui.close({ id: STYLE_PANE })} />
       </Box>
     )
   })
