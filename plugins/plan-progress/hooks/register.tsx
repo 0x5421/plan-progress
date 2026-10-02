@@ -911,7 +911,8 @@ export const register: Register = on => {
     return (
       <Box flexDirection="row" alignItems="center" gap={1}>
         {Client
-          ? [<Client key="progress-footer" module="./footer.tsx" props={{ label, gear: SETTINGS_GLYPH, isDim }} />]
+          ? // an explicit size: left to measure itself, the region showed nothing in the desktop footer
+            [<Client key="progress-footer" module="./footer.tsx" width={[...label].length + 3} height={1} props={{ label, gear: SETTINGS_GLYPH, isDim }} />]
           : [
               <Button key="progress-toggle" dimColor={isDim} label={label} onPress={() => toggleBars($)} />,
               <Button key="progress-style" plain dimColor label={SETTINGS_GLYPH} onPress={() => openStyles($)} />,

@@ -51,6 +51,10 @@ for (const surface of ['desktop', 'terminal'] as const) {
     expect(footer).toContain('Progress')
     expect(footer).toContain('⚙︎')
     expect(footer).not.toContain('Button')
+    // the region names its size: left to measure itself it drew nothing in the desktop footer (0.5.8)
+    const region = await ui.find({ key: 'progress-footer' })
+    expect(region?.props.width).toBe(11)
+    expect(region?.props.height).toBe(1)
   })
 
   test(`${surface}: a click on ⚙ opens the style pane, a click on Progress toggles the bars`, async ($, on) => {
