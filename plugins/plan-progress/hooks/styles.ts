@@ -277,10 +277,7 @@ const beads: BarStyle = {
 
 const ledger: BarStyle = {
   glyph: () => null,
-  right: p => {
-    const w = where(p)
-    return `${String(Math.min(w.pos, w.total)).padStart(2, '0')}/${w.total}`
-  },
+  right: stepCount,
   draw(p, W, now, agents) {
     const H = 22
     const done = p.state === 'done'

@@ -914,7 +914,6 @@ export const register: Register = on => {
                 </Text>
               )}
               <Text dimColor>{look && Svg ? look.right(p, now) : `${String(pct).padStart(3, FIGURE_SPACE)}%`}</Text>
-              <Button key={`style-${p.id}`} plain dimColor label="▾" onPress={() => $.ui.open({ id: STYLE_PANE, title: STYLE_PANE_TITLE })} />
               <Button key={`close-${p.id}`} plain dimColor label="✕" onPress={() => dropPlan($, p.id)} />
             </Box>,
           ]
