@@ -928,6 +928,11 @@ export const register: Register = on => {
             )
           })}
         </Box>
+
+        {/* every press above already saved; this one only closes the pane */}
+        <Box flexDirection="row" justifyContent="flex-end">
+          <Button key="save-close" variant="primary" label="儲存並關閉" onPress={() => $.ui.close({ id: STYLE_PANE })} />
+        </Box>
       </Box>
     )
   })

@@ -5,6 +5,7 @@ const SCROLL = { offset: 0, bodyRows: 40 }
 // the engine's own answers beneath the plugin: a fixed clock, an in-memory store, an empty drawing
 function engine(on: any) {
   const store = new Map<string, unknown>()
+  const closed: string[] = []
   // calls on $ answer { value }; events (ui.render, command.run) answer their result
   on('clock.now', () => ({ value: 1_790_000_000_000 }))
   on('clock.every', () => ({ value: undefined }))
@@ -16,10 +17,14 @@ function engine(on: any) {
   })
   on('ui.render', () => ({ type: 'Box', props: {}, children: [] }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.close', () => ({ value: undefined }))
+  on('ui.close', (_$: unknown, e: { id: string }) => {
+    closed.push(e.id)
+    return { value: undefined }
+  })
   on('ui.toast', () => ({ value: undefined }))
   on('command.run', () => ({ text: '' }))
   on('audio.play', () => ({ value: undefined }))
+  return { store, closed }
 }
 const PANE = 'plan-progress-styles'
 const STYLES = ['segments', 'hairline', 'beads', 'ledger', 'transit', 'original']
@@ -41,6 +46,19 @@ for (const surface of ['desktop', 'terminal'] as const) {
     await ui.press({ key: 'use-beads' })
     expect((await ui.find({ key: 'use-beads' }))?.text).toBe('✓ 使用中')
     expect((await ui.find({ key: 'use-segments' }))?.text).toBe('使用')
+  })
+
+  test(`${surface}: save and close keeps the choice and closes the pane`, async ($, on) => {
+    const host = engine(on)
+    const props = { title: '進度條樣式', isFocused: true, bodyColumns: 50, placement: 'dock', scroll: SCROLL }
+    const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'Pane', requestId: PANE, props: props as never })
+    await ui.press({ key: 'use-transit' })
+    await ui.press({ key: 'agents-summary' })
+    expect((await ui.find({ key: 'save-close' }))?.text).toBe('儲存並關閉')
+    await ui.press({ key: 'save-close' })
+    expect(host.closed).toEqual([PANE])
+    expect(host.store.get('style')).toBe('transit')
+    expect(host.store.get('agentView')).toBe('summary')
   })
 
   test(`${surface}: the pane switches how subagents show`, async ($, on) => {
