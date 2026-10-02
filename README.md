@@ -51,12 +51,14 @@
 
 ## 安裝
 
-在 Claude Code 外的終端機執行（把路徑換成這個資料夾的位置）：
+在 Claude Code 外的終端機執行：
 
 ```bash
-claude plugin marketplace add /path/to/plan-progress
-claude plugin install plan-progress@zycck-mods-local
+claude plugin marketplace add 0x5421/plan-progress
+claude plugin install plan-progress@fork-zycck-mods
 ```
+
+倉庫是私人的，要先被加為協作者，而且本機的 git 要能讀到這個倉庫（例如已用 `gh auth login` 登入）。已經下載到本機的話，第一行改成 `claude plugin marketplace add /path/to/plan-progress`。
 
 開一個新的 session 就會載入。
 
@@ -65,7 +67,7 @@ claude plugin install plan-progress@zycck-mods-local
 先把 `plugins/plan-progress/.claude-plugin/plugin.json` 的 `version` 加一，再執行：
 
 ```bash
-claude plugin update plan-progress@zycck-mods-local
+claude plugin update plan-progress@fork-zycck-mods
 ```
 
 版本號沒變的話，更新指令會說已經是最新版而不更新。

@@ -1,11 +1,11 @@
 {
-  "name": "zycck-mods-local",
+  "name": "fork-zycck-mods",
   "owner": {
     "name": "Kirill Serditov",
     "url": "https://github.com/zycck"
   },
   "metadata": {
-    "description": "Claude Code mods by zycck"
+    "description": "A fork of zycck's Claude Code mods"
   },
   "plugins": [
     {
