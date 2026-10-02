@@ -26,6 +26,7 @@
 | 新增 5 種樣式 | 分段 `segments`、細線 `hairline`、串珠 `beads`、刻度字 `ledger`、路線圖 `transit`，畫法在 `hooks/styles.ts` |
 | 樣式面板 | 點輸入框下方 **Progress** 旁的齒輪 **⚙**（或輸入 `/progress-style`）打開，6 種樣式各有即時預覽，點「使用」立刻切換 |
 | Subagent 顯示 | 面板最上面切換「展開／摘要／隱藏」：每個 subagent 一條、合成一行只顯示各狀態數量、或完全不顯示 |
+| 自動收掉完成的進度條 | 原版完成的進度條會一直留著（最多 3 條）。現在你送出下一則訊息時，完成的那幾條會漸淡後消失，進行中的不受影響 |
 | 記住選擇 | 選好的樣式和 subagent 顯示方式會存起來，下次開 session 沿用 |
 | 切換指令 | `/progress-style` 打開面板並列出樣式；`/progress-style <名稱>` 直接切換；`/progress-style next` 換下一個 |
 | 深淺色 | 新樣式的顏色跟著深淺色主題切換 |

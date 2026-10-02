@@ -617,6 +617,34 @@ async function dropPlan($: EngineInterface, id: string) {
   await update($, plans, list => list.filter(p => p.id !== id))
 }
 
+// finished bars stay until the person sends their next message (they have seen the result by then):
+// they fade out for LEAVE_MS, then leave the list
+const LEAVE_MS = 400
+async function fadeOutDone($: EngineInterface) {
+  const now = await $.clock.now()
+  let isLeaving = false
+  await update($, plans, list =>
+    list.map(p => {
+      if (p.state !== 'done' || p.leavingAt) return p
+      isLeaving = true
+      return { ...p, leavingAt: now }
+    }),
+  )
+  if (isLeaving) $.clock.after(LEAVE_MS, () => dropLeft($))
+}
+async function dropLeft($: EngineInterface) {
+  const now = await $.clock.now()
+  for (const p of await read($, plans)) {
+    if (!p.leavingAt || now - p.leavingAt < LEAVE_MS) continue
+    lastHead.delete(p.id)
+    for (const a of p.agents ?? []) lastStrip.delete(a.id)
+  }
+  await update($, plans, list => list.filter(p => !p.leavingAt || now - p.leavingAt < LEAVE_MS))
+}
+// a leaving bar's drawing fades to nothing; its title and count dim, since Text has no opacity
+const fadeOut = (svg: string, W: number, H: number) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><style>@keyframes pp-leave{to{opacity:0}}.pp-leave{animation:pp-leave ${LEAVE_MS}ms ease-out forwards}</style><g class="pp-leave">${svg}</g></svg>`
+
 const STEP_SCHEMA = {
   type: 'object',
   required: ['title', 'status'],
@@ -657,7 +685,11 @@ export const register: Register = on => {
   // the rule lives in the cached system prompt; a message only carries one short line when bars are open,
   // and the person answering clears any "needs input" without a model call
   on('prompt.submit', async ($, e, next) => {
-    if (e.origin.kind !== 'composer') return next(e)
+    // the person's own message, typed here or sent from their phone, retires the finished bars;
+    // a prompt with no origin is the person's own too
+    const origin = e.origin as { kind: string; asUser?: boolean } | undefined
+    if (!origin || origin.kind === 'composer' || origin.kind === 'bridge' || (origin.kind === 'plugin' && origin.asUser === true)) await fadeOutDone($)
+    if (origin?.kind !== 'composer') return next(e)
     const list = await read($, plans)
     if (list.some(p => p.state === 'needs_input')) {
       await update($, plans, all => all.map(p => (p.state === 'needs_input' ? { ...p, state: 'running' as const, note: null } : p)))
@@ -1003,6 +1035,8 @@ export const register: Register = on => {
         {list.flatMap((p, i) => {
           const v = applyAgentView(visibleAgents(p, now), view)
           const drawn = drawBar(style, p, trackW, now, v)
+          const isLeaving = Boolean(p.leavingAt)
+          const source = isLeaving ? fadeOut(drawn.svg, trackW, drawn.height) : drawn.svg
           const glyph = look ? look.glyph(p) : { char: STATE_GLYPH[p.state], color: STATE_COLOR[p.state] }
           const agentsAlt = v ? `; agents: ${(p.agents ?? []).map(a => `${a.title} ${a.state}`).join(', ')}` : ''
           const line = i > 0 && Svg ? [<Svg key={`div-${p.id}`} source={divider} alt="" width={total} height={1} />] : []
@@ -1019,11 +1053,11 @@ export const register: Register = on => {
           return [
             ...line,
             <Box key={`bar-${p.id}`} flexDirection="row" alignItems={v || drawn.height > TRACK_H ? 'flex-start' : 'center'} gap={1}>
-              {glyph ? [<Text key="glyph" color={glyph.color}>{glyph.char}</Text>] : []}
-              <Text wrap="truncate">{p.title}</Text>
+              {glyph ? [<Text key="glyph" color={glyph.color} dimColor={isLeaving}>{glyph.char}</Text>] : []}
+              <Text wrap="truncate" dimColor={isLeaving}>{p.title}</Text>
               <Box flexGrow={1} />
               {Svg ? (
-                <Svg source={drawn.svg} alt={alt} width={trackW} height={drawn.height} />
+                <Svg source={source} alt={alt} width={trackW} height={drawn.height} />
               ) : (
                 <Text>
                   <Text color={color}>{bar.replace(/─/g, '')}</Text>

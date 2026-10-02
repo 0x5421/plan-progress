@@ -1,17 +1,19 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 const SCROLL = { offset: 0, bodyRows: 40 }
 
 // the engine's own answers beneath the plugin: a fixed clock, an in-memory store, an empty drawing
-function engine(on: any) {
+function engine(on: any, opts: { clock?: boolean } = {}) {
   const store = new Map<string, unknown>()
   const closed: string[] = []
   const opened: string[] = []
   const toasts: string[] = []
   // calls on $ answer { value }; events (ui.render, command.run) answer their result
-  on('clock.now', () => ({ value: 1_790_000_000_000 }))
-  on('clock.every', () => ({ value: undefined }))
-  on('clock.after', () => ({ value: undefined }))
+  if (opts.clock !== false) {
+    on('clock.now', () => ({ value: 1_790_000_000_000 }))
+    on('clock.every', () => ({ value: undefined }))
+    on('clock.after', () => ({ value: undefined }))
+  }
   on('store.get', (_$: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_$: unknown, e: { key: string; value: unknown }) => {
     store.set(e.key, e.value)
@@ -33,6 +35,7 @@ function engine(on: any) {
   on('command.run', () => ({ text: '' }))
   on('audio.play', () => ({ value: undefined }))
   on('ui.message', () => ({}))
+  on('prompt.submit', (_$: unknown, e: { text: string }) => ({ text: e.text }))
   return { store, closed, opened, toasts }
 }
 const PANE = 'plan-progress-styles'
@@ -178,4 +181,33 @@ test('/progress-style rejects an unknown name and cycles with next', async ($, o
     engine(on)
   expect(JSON.stringify(await $.command.run({ command: 'progress-style', args: 'nope' }))).toContain('沒有')
   expect(JSON.stringify(await $.command.run({ command: 'progress-style', args: 'next' }))).toContain('已切換到 hairline')
+})
+
+test('the person\'s next message fades finished bars out, then removes them; running bars stay', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: 1_790_000_000_000 })
+  const TOOL = 'mcp__plan-progress__plan_progress'
+  const stages = [{ name: 'Build', steps: [{ title: 'one', status: 'active' }, { title: 'two', status: 'pending' }] }]
+  await $.tool.call({ tool: TOOL, id: 'finished', title: 'finished', stages } as never)
+  await $.tool.call({ tool: TOOL, id: 'finished', state: 'done' } as never)
+  await $.tool.call({ tool: TOOL, id: 'working', title: 'working', stages } as never)
+  const props = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120, scroll: SCROLL }
+  const look = async () => {
+    const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: props as never })
+    const tree = JSON.stringify(await above.drawn())
+    // bar drawings only: the hairline divider between two bars is an Svg with an empty alt
+    const rows = (await above.findAll({ type: 'Svg' })).filter(el => el.props.alt !== '').map(el => String(el.props.source).includes('pp-leave'))
+    await above.unmount()
+    return { tree, rows }
+  }
+  expect((await look()).rows).toEqual([false, false])
+  await $.prompt.submit({ text: 'next task', asUser: true })
+  // the finished bar fades, the running one does not
+  const fading = await look()
+  expect(fading.rows).toEqual([true, false])
+  await clock.advance(450)
+  const after = await look()
+  expect(after.rows).toEqual([false])
+  expect(after.tree).toContain('working')
+  expect(after.tree).not.toContain('"finished"')
 })

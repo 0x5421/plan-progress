@@ -24,6 +24,8 @@ export type Plan = {
   agents?: AgentRun[]
   // when the current batch of agents all finished; their strips fold a few seconds later
   agentsDoneAt?: number | null
+  // set when the person's next message retires a finished bar; it fades out, then leaves the list
+  leavingAt?: number | null
 }
 
 declare module 'claude-code' {
