@@ -54,6 +54,9 @@ test('desktop: every style draws the bar above the prompt', async ($, on) => {
     const ui = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: props as never })
     const svg = await ui.findAll({ type: 'Svg' })
     expect(svg.length).toBe(1)
+    // the ▾ on the bar row itself, beside ✕, opens the style pane
+    expect((await ui.find({ key: 'style-demo' }))?.text).toBe('▾')
+    expect(await ui.press({ key: 'style-demo' })).toBeDefined()
     await ui.unmount()
   }
 })
