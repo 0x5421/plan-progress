@@ -18,4 +18,4 @@ Ops:
 
 The result already says `done/total, state, active step`; no need to check the bar.
 
-User commands: `/progress` toggle, `/progress-demo`, `/progress-sounds`, `/progress-clear`. The **Progress** button in the footer is always shown while the mod is loaded.
+User commands: `/progress` toggle, `/progress-demo`, `/progress-sounds`, `/progress-clear`. The **⚙** button in the footer is always shown while the mod is loaded; it opens the style pane, which also shows or hides the bars (`/progress-style` opens it too).
