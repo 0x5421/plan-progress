@@ -49,10 +49,11 @@ for (const surface of ['desktop', 'terminal'] as const) {
     const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'Pane', requestId: PANE, props: props as never })
     for (const k of ['expanded', 'summary', 'hidden']) expect(await ui.find({ key: `agents-${k}` })).toBeDefined()
     const tree = async () => JSON.stringify(await ui.drawn())
-    expect(await tree()).toContain('每個 subagent 一條')
+    // the pane stays bare: names, buttons and previews, no explanations
+    expect(await tree()).not.toContain('像捷運圖')
+    expect(await tree()).not.toContain('下次開 session')
     if (surface === 'desktop') expect(await tree()).toContain('比對打包大小')
     await ui.press({ key: 'agents-summary' })
-    expect(await tree()).toContain('合成一行')
     if (surface === 'desktop') {
       // the preview folds three runs into one line that counts them
       expect(await tree()).toContain('3 subagents')
@@ -60,8 +61,10 @@ for (const surface of ['desktop', 'terminal'] as const) {
       expect(await tree()).not.toContain('比對打包大小')
     }
     await ui.press({ key: 'agents-hidden' })
-    expect(await tree()).toContain('保持一行高')
-    if (surface === 'desktop') expect(await tree()).not.toContain('3 subagents')
+    if (surface === 'desktop') {
+      expect(await tree()).not.toContain('3 subagents')
+      expect(await tree()).not.toContain('比對打包大小')
+    }
   })
 }
 

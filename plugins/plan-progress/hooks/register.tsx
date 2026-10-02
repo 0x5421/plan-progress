@@ -32,11 +32,6 @@ const PANE_ACCENT = '#D97757'
 const AGENT_VIEWS = ['expanded', 'summary', 'hidden'] as const
 type AgentView = (typeof AGENT_VIEWS)[number]
 const AGENT_VIEW_LABEL: Record<AgentView, string> = { expanded: '展開', summary: '摘要', hidden: '隱藏' }
-const AGENT_VIEW_HINT: Record<AgentView, string> = {
-  expanded: '每個 subagent 一條：名稱、正在做什麼、跑多久',
-  summary: '所有 subagent 合成一行，只顯示各狀態的數量',
-  hidden: '不顯示 subagent，進度條保持一行高',
-}
 const isAgentView = (v: unknown): v is AgentView => typeof v === 'string' && (AGENT_VIEWS as readonly string[]).includes(v)
 const agentView = atom({ plugin: 'plan-progress', key: 'agentView' } as const, 'expanded' as string)
 const AGENT_VIEW_STORE_KEY = 'agentView'
@@ -891,8 +886,6 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" gap={2}>
-        <Text dimColor>點一下就換，下次開 session 沿用。</Text>
-
         <Box flexDirection="column" gap={1}>
           <Text bold>Subagent 顯示</Text>
           <Box flexDirection="row" gap={1}>
@@ -905,7 +898,6 @@ export const register: Register = on => {
               />
             ))}
           </Box>
-          <Text dimColor wrap="wrap">{AGENT_VIEW_HINT[view]}</Text>
           {Svg ? [<Svg key="agents-preview" source={agentsDrawn.svg} alt={`subagents ${view} preview`} width={W} height={agentsDrawn.height} />] : []}
         </Box>
 
@@ -915,7 +907,7 @@ export const register: Register = on => {
             const isCurrent = id === current
             const sample = { ...DEMO(now), id: `preview-${id}` }
             const drawn = drawBar(id, sample, tileW, now, null)
-            const [name, ...rest] = STYLE_INFO[id].split('：')
+            const name = STYLE_INFO[id].split('：')[0]
             const frame = isCurrent ? { borderColor: PANE_ACCENT } : { borderDimColor: true }
 
             return (
@@ -931,7 +923,6 @@ export const register: Register = on => {
                     onPress={() => (isCurrent ? undefined : setStyle($, id))}
                   />
                 </Box>
-                <Text dimColor wrap="wrap">{rest.join('：')}</Text>
                 {Svg ? [<Svg key={`preview-${id}`} source={drawn.svg} alt={`${id} preview`} width={tileW} height={drawn.height} />] : []}
               </Box>
             )
