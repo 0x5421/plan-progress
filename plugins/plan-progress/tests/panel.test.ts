@@ -92,10 +92,14 @@ test('desktop: every style tile and preview has one size, and switching subagent
   const ui = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'Pane', requestId: PANE, props: props as never })
   // Svg carries no key: in document order the first is the subagent preview, the next six the style previews
   const svgSizes = async () => (await ui.findAll({ type: 'Svg' })).map(el => `${el.props.width}x${el.props.height}`)
-  // a tile's height follows its content (one title row and the preview slot), so its width and the slot decide its size
-  const tileWidths = await Promise.all(STYLES.map(async id => (await ui.find({ key: `style-${id}` }))?.props.width))
-  expect(new Set(tileWidths).size).toBe(1)
-  expect(typeof tileWidths[0]).toBe('number')
+  // tiles stretch to the pane's width instead of naming one: a Box width counts cells, so a pixel figure there
+  // made each tile ~3000px wide and pushed its 使用 button out of sight (0.5.3)
+  expect((await ui.find({ key: 'style-list' }))?.props.alignItems).toBe('stretch')
+  for (const id of STYLES) {
+    const tile = await ui.find({ key: `style-${id}` })
+    expect(tile).toBeDefined()
+    expect(tile?.props.width).toBeUndefined()
+  }
   const previews = (await svgSizes()).slice(1)
   expect(previews.length).toBe(STYLES.length)
   expect(new Set(previews).size).toBe(1)

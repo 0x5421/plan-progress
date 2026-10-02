@@ -916,7 +916,8 @@ export const register: Register = on => {
           {Svg ? [<Svg key="agents-preview" source={agentsDrawn.svg} alt={`subagents ${view} preview`} width={W} height={agentsDrawn.height} />] : []}
         </Box>
 
-        <Box flexDirection="column" gap={1}>
+        {/* tiles name no width (a Box width counts cells, not pixels); the column stretches them all to the pane's width */}
+        <Box key="style-list" flexDirection="column" alignItems="stretch" gap={1}>
           <Text bold>進度條樣式</Text>
           {STYLE_IDS.map(id => {
             const isCurrent = id === current
@@ -925,7 +926,7 @@ export const register: Register = on => {
             const frame = isCurrent ? { borderColor: PANE_ACCENT } : { borderDimColor: true }
 
             return (
-              <Box key={`style-${id}`} flexDirection="column" gap={1} width={W} borderStyle="round" paddingX={1} {...frame}>
+              <Box key={`style-${id}`} flexDirection="column" gap={1} borderStyle="round" paddingX={1} {...frame}>
                 <Box flexDirection="row" alignItems="center" gap={1}>
                   <Text bold {...(isCurrent ? { color: PANE_ACCENT } : {})}>{name}</Text>
                   <Text dimColor>{id}</Text>
