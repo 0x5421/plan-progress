@@ -30,10 +30,10 @@ const PANE = 'plan-progress-styles'
 const STYLES = ['segments', 'hairline', 'beads', 'ledger', 'transit', 'original']
 
 for (const surface of ['desktop', 'terminal'] as const) {
-  test(`${surface}: the ▾ button sits beside Progress`, async ($, on) => {
+  test(`${surface}: the ⚙ button sits beside Progress`, async ($, on) => {
     engine(on)
     const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'SessionMode', props: { modes: [] } as never })
-    expect((await ui.find({ key: 'progress-style' }))?.text).toBe('▾')
+    expect((await ui.find({ key: 'progress-style' }))?.text).toBe("\u2699\uFE0E")
     expect(await ui.find({ key: 'progress-toggle' })).toBeDefined()
   })
 
@@ -127,7 +127,7 @@ test('desktop: every style draws the bar above the prompt', async ($, on) => {
     const ui = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: props as never })
     const svg = await ui.findAll({ type: 'Svg' })
     expect(svg.length).toBe(1)
-    // the ▾ lives in the footer only, not on the bar row
+    // the ⚙ lives in the footer only, not on the bar row
     expect(await ui.find({ key: 'style-demo' })).toBeUndefined()
     // counts read like 5/16, never zero-padded
     expect(JSON.stringify(await ui.drawn())).not.toMatch(/"0\d\/\d+"/)

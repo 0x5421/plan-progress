@@ -24,7 +24,7 @@
 | 類別 | 內容 |
 |---|---|
 | 新增 5 種樣式 | 分段 `segments`、細線 `hairline`、串珠 `beads`、刻度字 `ledger`、路線圖 `transit`，畫法在 `hooks/styles.ts` |
-| 樣式面板 | 點輸入框下方 **Progress** 旁的 **▾**（或輸入 `/progress-style`）打開，6 種樣式各有即時預覽，點「使用」立刻切換 |
+| 樣式面板 | 點輸入框下方 **Progress** 旁的齒輪 **⚙**（或輸入 `/progress-style`）打開，6 種樣式各有即時預覽，點「使用」立刻切換 |
 | Subagent 顯示 | 面板最上面切換「展開／摘要／隱藏」：每個 subagent 一條、合成一行只顯示各狀態數量、或完全不顯示 |
 | 記住選擇 | 選好的樣式和 subagent 顯示方式會存起來，下次開 session 沿用 |
 | 切換指令 | `/progress-style` 打開面板並列出樣式；`/progress-style <名稱>` 直接切換；`/progress-style next` 換下一個 |
@@ -32,7 +32,7 @@
 | 規則調整 | 階段名一律用英文，任務標題和步驟仍用使用者的語言 |
 | 修正 | 原版 subagent 條在淺色主題下文字幾乎看不見 |
 | 修正 | 判斷「Claude 在問你問題」時也認得中文全形問號「？」，不會再把中文提問的回覆擋回去 |
-| 測試 | `tests/panel.test.ts`：畫出 ▾ 按鈕、樣式面板和 6 種樣式的進度條，並按按鈕確認會切換 |
+| 測試 | `tests/panel.test.ts`：畫出 ⚙ 按鈕、樣式面板和 6 種樣式的進度條，並按按鈕確認會切換 |
 
 ## 樣式一覽
 
@@ -68,7 +68,7 @@ claude plugin update plan-progress@zycck-mods-local
 
 ## 使用
 
-- 想換外觀：點輸入框下方 **Progress** 旁的 **▾**（桌面版在模型選單左邊），或輸入 `/progress-style`，在面板裡點「使用」
+- 想換外觀：點輸入框下方 **Progress** 旁的齒輪 **⚙**（桌面版在模型選單左邊），或輸入 `/progress-style`，在面板裡點「使用」
 - 想看示範：`/progress-demo`
 - 隱藏／顯示進度條：點 **Progress** 或輸入 `/progress`
 - 清掉所有進度條：`/progress-clear`

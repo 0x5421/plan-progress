@@ -23,10 +23,12 @@ const setStyle = async ($: EngineInterface, id: StyleId) => {
   await update($, barStyle, () => id)
   await $.store.set(STYLE_STORE_KEY, id)
 }
-// the pane that lists every style with a live preview; opened from the ▾ beside the Progress button
+// the pane that lists every style with a live preview; opened from the ⚙ beside the Progress button
 const STYLE_PANE = 'plan-progress-styles'
 const STYLE_PANE_TITLE = '進度條樣式'
 const PANE_ACCENT = '#D97757'
+// the gear that opens the pane; U+FE0E asks for the plain text glyph, not the colour emoji
+const SETTINGS_GLYPH = '⚙︎'
 
 // how subagent strips show under a bar: one strip each, one summary line, or none
 const AGENT_VIEWS = ['expanded', 'summary', 'hidden'] as const
@@ -868,7 +870,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="row" alignItems="center" gap={1}>
         <Button key="progress-toggle" dimColor={count === 0 || !open} label={count > 1 ? `Progress ${count}` : 'Progress'} onPress={press} />
-        <Button key="progress-style" plain dimColor label="▾" onPress={() => $.ui.open({ id: STYLE_PANE, title: STYLE_PANE_TITLE })} />
+        <Button key="progress-style" plain dimColor label={SETTINGS_GLYPH} onPress={() => $.ui.open({ id: STYLE_PANE, title: STYLE_PANE_TITLE })} />
         {below}
       </Box>
     )
