@@ -24,7 +24,7 @@
 | 類別 | 內容 |
 |---|---|
 | 新增 5 種樣式 | 分段 `segments`、細線 `hairline`、串珠 `beads`、刻度字 `ledger`、路線圖 `transit`，畫法在 `hooks/styles.ts` |
-| 樣式面板 | 點 **Progress** 旁邊的 **▾** 打開，6 種樣式各有即時預覽，點「使用」立刻切換 |
+| 樣式面板 | 點進度條那一行 ✕ 左邊的 **▾**（或輸入 `/progress-style`）打開，6 種樣式各有即時預覽，點「使用」立刻切換 |
 | 記住選擇 | 選好的樣式會存起來，下次開 session 沿用 |
 | 切換指令 | `/progress-style` 打開面板並列出樣式；`/progress-style <名稱>` 直接切換；`/progress-style next` 換下一個 |
 | 深淺色 | 新樣式的顏色跟著深淺色主題切換 |
@@ -67,7 +67,7 @@ claude plugin update plan-progress@zycck-mods-local
 
 ## 使用
 
-- 想換外觀：點底部 **Progress** 旁的 **▾**，在面板裡點「使用」
+- 想換外觀：點進度條那一行 ✕ 左邊的 **▾**，或輸入 `/progress-style`，在面板裡點「使用」（底部模式標籤區也放了一個 ▾，但桌面 app 不一定會顯示那一區）
 - 想看示範：`/progress-demo`
 - 隱藏／顯示進度條：點 **Progress** 或輸入 `/progress`
 - 清掉所有進度條：`/progress-clear`
