@@ -35,6 +35,8 @@ declare module 'claude-code' {
       tick: number
       // the bar style chosen with /progress-style, one of STYLE_IDS in hooks/styles.ts
       style: string
+      // how subagent strips show: 'expanded', 'summary' or 'hidden'
+      agentView: string
     }
   }
 }

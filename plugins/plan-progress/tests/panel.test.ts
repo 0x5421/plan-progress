@@ -37,10 +37,31 @@ for (const surface of ['desktop', 'terminal'] as const) {
     const props = { title: '進度條樣式', isFocused: true, bodyColumns: 50, placement: 'dock', scroll: SCROLL }
     const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'Pane', requestId: PANE, props: props as never })
     for (const id of STYLES) expect(await ui.find({ key: `use-${id}` })).toBeDefined()
-    expect((await ui.find({ key: 'use-segments' }))?.text).toBe('使用中')
+    expect((await ui.find({ key: 'use-segments' }))?.text).toBe('✓ 使用中')
     await ui.press({ key: 'use-beads' })
-    expect((await ui.find({ key: 'use-beads' }))?.text).toBe('使用中')
+    expect((await ui.find({ key: 'use-beads' }))?.text).toBe('✓ 使用中')
     expect((await ui.find({ key: 'use-segments' }))?.text).toBe('使用')
+  })
+
+  test(`${surface}: the pane switches how subagents show`, async ($, on) => {
+    engine(on)
+    const props = { title: '進度條樣式', isFocused: true, bodyColumns: 50, placement: 'dock', scroll: SCROLL }
+    const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'Pane', requestId: PANE, props: props as never })
+    for (const k of ['expanded', 'summary', 'hidden']) expect(await ui.find({ key: `agents-${k}` })).toBeDefined()
+    const tree = async () => JSON.stringify(await ui.drawn())
+    expect(await tree()).toContain('每個 subagent 一條')
+    if (surface === 'desktop') expect(await tree()).toContain('比對打包大小')
+    await ui.press({ key: 'agents-summary' })
+    expect(await tree()).toContain('合成一行')
+    if (surface === 'desktop') {
+      // the preview folds three runs into one line that counts them
+      expect(await tree()).toContain('3 subagents')
+      expect(await tree()).toContain('1 running · 1 waiting · 1 done')
+      expect(await tree()).not.toContain('比對打包大小')
+    }
+    await ui.press({ key: 'agents-hidden' })
+    expect(await tree()).toContain('保持一行高')
+    if (surface === 'desktop') expect(await tree()).not.toContain('3 subagents')
   })
 }
 

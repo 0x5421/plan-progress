@@ -26,6 +26,28 @@ const setStyle = async ($: EngineInterface, id: StyleId) => {
 // the pane that lists every style with a live preview; opened from the ▾ beside the Progress button
 const STYLE_PANE = 'plan-progress-styles'
 const STYLE_PANE_TITLE = '進度條樣式'
+const PANE_ACCENT = '#D97757'
+
+// how subagent strips show under a bar: one strip each, one summary line, or none
+const AGENT_VIEWS = ['expanded', 'summary', 'hidden'] as const
+type AgentView = (typeof AGENT_VIEWS)[number]
+const AGENT_VIEW_LABEL: Record<AgentView, string> = { expanded: '展開', summary: '摘要', hidden: '隱藏' }
+const AGENT_VIEW_HINT: Record<AgentView, string> = {
+  expanded: '每個 subagent 一條：名稱、正在做什麼、跑多久',
+  summary: '所有 subagent 合成一行，只顯示各狀態的數量',
+  hidden: '不顯示 subagent，進度條保持一行高',
+}
+const isAgentView = (v: unknown): v is AgentView => typeof v === 'string' && (AGENT_VIEWS as readonly string[]).includes(v)
+const agentView = atom({ plugin: 'plan-progress', key: 'agentView' } as const, 'expanded' as string)
+const AGENT_VIEW_STORE_KEY = 'agentView'
+const agentViewOf = async ($: EngineInterface): Promise<AgentView> => {
+  const v = await read($, agentView)
+  return isAgentView(v) ? v : 'expanded'
+}
+const setAgentView = async ($: EngineInterface, v: AgentView) => {
+  await update($, agentView, () => v)
+  await $.store.set(AGENT_VIEW_STORE_KEY, v)
+}
 const STRIP_H = 18
 const STRIP_GAP = 3
 const MAX_STRIPS = 4 // past this, the finished ones fold into one "+N more" strip
@@ -359,6 +381,30 @@ function visibleAgents(p: Plan, now: number): { shown: AgentRun[]; hidden: Agent
   return { shown: list.filter(a => keep.has(a.id)), hidden: list.filter(a => !keep.has(a.id)) }
 }
 
+// the person's choice applied to the strips: summary folds them into one made-up run that every style draws as a strip
+function applyAgentView(v: { shown: AgentRun[]; hidden: AgentRun[] } | null, view: AgentView): { shown: AgentRun[]; hidden: AgentRun[] } | null {
+  if (!v || view === 'expanded') return v
+  if (view === 'hidden') return null
+  const all = [...v.shown, ...v.hidden]
+  const count = (s: AgentRun['state']) => all.filter(a => a.state === s).length
+  const tool = (
+    [
+      ['running', 'running'],
+      ['waiting', 'waiting'],
+      ['done', 'done'],
+      ['error', 'failed'],
+    ] as const
+  )
+    .map(([s, label]) => (count(s) ? `${count(s)} ${label}` : ''))
+    .filter(Boolean)
+    .join(' · ')
+  const state: AgentRun['state'] = count('waiting') ? 'waiting' : count('running') ? 'running' : count('error') ? 'error' : 'done'
+  const ends = all.map(a => a.endedAt)
+  const endedAt = ends.every((t): t is number => t !== null) ? Math.max(...ends) : null
+  const startedAt = Math.min(...all.map(a => a.startedAt))
+  return { shown: [{ id: 'agents-summary', title: plural(all.length, 'subagent'), state, tool, startedAt, endedAt, depth: 0 }], hidden: [] }
+}
+
 // what each strip showed last time it was drawn, so a change morphs from the old status instead of jumping
 const lastStrip = new Map<string, { tool: string; color: string }>()
 const MORPH = '.2s'
@@ -424,6 +470,17 @@ function stripsSvg(v: { shown: AgentRun[]; hidden: AgentRun[] }, W: number, now:
 
 function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? '' : 's'}`
+}
+
+// one bar with its strips in the chosen style; the bar above the prompt and the pane's previews both draw through here
+function drawBar(style: StyleId, p: Plan, W: number, now: number, v: { shown: AgentRun[]; hidden: AgentRun[] } | null): { svg: string; height: number } {
+  if (style !== 'original') return STYLES[style].draw(p, W, now, v)
+  if (!v) return { svg: trackSvg(p, W), height: TRACK_H }
+  const stripsH = 5 + stripsHeight(v.shown.length + (v.hidden.length > 0 ? 1 : 0))
+  return {
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${TRACK_H + stripsH}">${trackSvg(p, W)}<g transform="translate(0 ${TRACK_H + 5})">${stripsSvg(v, W, now)}</g></svg>`,
+    height: TRACK_H + stripsH,
+  }
 }
 
 // ---------- engine glue ----------
@@ -687,6 +744,8 @@ export const register: Register = on => {
     })
     const saved = await $.store.get(STYLE_STORE_KEY)
     if (isStyleId(saved)) await update($, barStyle, () => saved)
+    const savedView = await $.store.get(AGENT_VIEW_STORE_KEY)
+    if (isAgentView(savedView)) await update($, agentView, () => savedView)
     $.clock.every(1000, async () => {
       // the hairline style shows elapsed time, so it redraws every second while a bar runs
       const isTiming = (await styleOf($)) === 'hairline' && (await read($, plans)).some(p => p.state !== 'done')
@@ -811,43 +870,73 @@ export const register: Register = on => {
     )
   })
 
-  // every style drawn on the demo plan; a press switches the bars at once
+  // two settings, each a press away: how subagents show, then one bordered tile per style with its preview
   on('ui.render', { component: 'Pane', requestId: STYLE_PANE }, async ($, e) => {
     const t = $.ui.resolve(e)
     const { Box, Button, Text } = t
     const Svg = 'Svg' in t ? t.Svg : null
     const current = await styleOf($)
+    const view = await agentViewOf($)
     const now = await $.clock.now()
-    const W = Math.max(200, Math.min(420, (e.props.bodyColumns || 50) * 8 - 24))
+    const W = Math.max(200, Math.min(460, (e.props.bodyColumns || 50) * 8 - 24))
+    // a tile's border and padding take about three columns
+    const tileW = W - 24
+    const sampleAgents: AgentRun[] = [
+      { id: 'pa1', title: '讀取模組', state: 'running', tool: 'Read', startedAt: now - 48_000, endedAt: null, depth: 0 },
+      { id: 'pa2', title: '量 API 延遲', state: 'done', tool: 'Done', startedAt: now - 72_000, endedAt: now - 6_000, depth: 0 },
+      { id: 'pa3', title: '比對打包大小', state: 'waiting', tool: 'Needs approval', startedAt: now - 9_000, endedAt: null, depth: 0 },
+    ]
+    const agentsSample = { ...DEMO(now), id: 'preview-agents', agents: sampleAgents }
+    const agentsDrawn = drawBar(current, agentsSample, W, now, applyAgentView({ shown: sampleAgents, hidden: [] }, view))
 
     return (
-      <Box flexDirection="column" gap={1}>
-        <Text dimColor>點一個樣式，進度條馬上換成那個樣子，下次開 session 也會沿用。</Text>
-        {STYLE_IDS.map(id => {
-          const isCurrent = id === current
-          const look = id === 'original' ? null : STYLES[id]
-          const sample = { ...DEMO(now), id: `preview-${id}` }
-          const drawn = look ? look.draw(sample, W, now, null) : { svg: trackSvg(sample, W), height: TRACK_H }
-          const [name, ...rest] = STYLE_INFO[id].split('：')
+      <Box flexDirection="column" gap={2}>
+        <Text dimColor>點一下就換，下次開 session 沿用。</Text>
 
-          return (
-            <Box key={`style-${id}`} flexDirection="column" gap={0}>
-              <Box flexDirection="row" alignItems="center" gap={1}>
-                <Text bold={isCurrent}>{`${isCurrent ? '✓ ' : ''}${name} ${id}`}</Text>
-                <Box flexGrow={1} />
-                <Button
-                  key={`use-${id}`}
-                  dimColor={isCurrent}
-                  label={isCurrent ? '使用中' : '使用'}
-                  onPress={() => (isCurrent ? undefined : setStyle($, id))}
-                />
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Subagent 顯示</Text>
+          <Box flexDirection="row" gap={1}>
+            {AGENT_VIEWS.map(k => (
+              <Button
+                key={`agents-${k}`}
+                variant={k === view ? 'primary' : 'secondary'}
+                label={AGENT_VIEW_LABEL[k]}
+                onPress={() => (k === view ? undefined : setAgentView($, k))}
+              />
+            ))}
+          </Box>
+          <Text dimColor wrap="wrap">{AGENT_VIEW_HINT[view]}</Text>
+          {Svg ? [<Svg key="agents-preview" source={agentsDrawn.svg} alt={`subagents ${view} preview`} width={W} height={agentsDrawn.height} />] : []}
+        </Box>
+
+        <Box flexDirection="column" gap={1}>
+          <Text bold>進度條樣式</Text>
+          {STYLE_IDS.map(id => {
+            const isCurrent = id === current
+            const sample = { ...DEMO(now), id: `preview-${id}` }
+            const drawn = drawBar(id, sample, tileW, now, null)
+            const [name, ...rest] = STYLE_INFO[id].split('：')
+            const frame = isCurrent ? { borderColor: PANE_ACCENT } : { borderDimColor: true }
+
+            return (
+              <Box key={`style-${id}`} flexDirection="column" gap={1} borderStyle="round" paddingX={1} {...frame}>
+                <Box flexDirection="row" alignItems="center" gap={1}>
+                  <Text bold {...(isCurrent ? { color: PANE_ACCENT } : {})}>{name}</Text>
+                  <Text dimColor>{id}</Text>
+                  <Box flexGrow={1} />
+                  <Button
+                    key={`use-${id}`}
+                    variant={isCurrent ? 'primary' : 'secondary'}
+                    label={isCurrent ? '✓ 使用中' : '使用'}
+                    onPress={() => (isCurrent ? undefined : setStyle($, id))}
+                  />
+                </Box>
+                <Text dimColor wrap="wrap">{rest.join('：')}</Text>
+                {Svg ? [<Svg key={`preview-${id}`} source={drawn.svg} alt={`${id} preview`} width={tileW} height={drawn.height} />] : []}
               </Box>
-              <Text dimColor wrap="wrap">{rest.join('：')}</Text>
-              {Svg ? [<Svg key={`preview-${id}`} source={drawn.svg} alt={`${id} preview`} width={W} height={drawn.height} />] : []}
-            </Box>
-          )
-        })}
-        <Button key="close-styles" plain dimColor label="關閉" onPress={() => $.ui.close({ id: STYLE_PANE })} />
+            )
+          })}
+        </Box>
       </Box>
     )
   })
@@ -865,6 +954,7 @@ export const register: Register = on => {
     const titleWidth = Math.min(Math.round(total * 0.3), Math.max(...list.map(p => Math.round(textWidth(p.title, 6.4)))))
     const style = await styleOf($)
     const look = style === 'original' ? null : STYLES[style]
+    const view = await agentViewOf($)
     // the hairline's elapsed time is wider than a percent
     const trackW = Math.max(120, Math.min(1400, total - titleWidth - 140 - (style === 'hairline' ? 18 : 0)))
     await read($, tick)
@@ -875,16 +965,8 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" gap={1}>
         {list.flatMap((p, i) => {
-          const v = visibleAgents(p, now)
-          const stripsH = v ? 5 + stripsHeight(v.shown.length + (v.hidden.length > 0 ? 1 : 0)) : 0
-          const drawn = look
-            ? look.draw(p, trackW, now, v)
-            : {
-                svg: v
-                  ? `<svg xmlns="http://www.w3.org/2000/svg" width="${trackW}" height="${TRACK_H + stripsH}">${trackSvg(p, trackW)}<g transform="translate(0 ${TRACK_H + 5})">${stripsSvg(v, trackW, now)}</g></svg>`
-                  : trackSvg(p, trackW),
-                height: TRACK_H + stripsH,
-              }
+          const v = applyAgentView(visibleAgents(p, now), view)
+          const drawn = drawBar(style, p, trackW, now, v)
           const glyph = look ? look.glyph(p) : { char: STATE_GLYPH[p.state], color: STATE_COLOR[p.state] }
           const agentsAlt = v ? `; agents: ${(p.agents ?? []).map(a => `${a.title} ${a.state}`).join(', ')}` : ''
           const line = i > 0 && Svg ? [<Svg key={`div-${p.id}`} source={divider} alt="" width={total} height={1} />] : []
