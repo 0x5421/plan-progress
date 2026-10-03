@@ -414,7 +414,7 @@ function frame(t: number): string {
       `<g opacity="${endO}">`,
       `<circle cx="${W / 2}" cy="760" r="14" fill="${CLAY}"/>`,
       text(W / 2, 890, 'plan-progress', 88, { weight: 700, anchor: 'middle' }),
-      text(W / 2, 1640, 'fork of zycck/claude-mods · by @0x5421', 28, { fill: MUTED, anchor: 'middle' }),
+      text(W / 2, 1640, 'fork of zycck/claude-mods', 28, { fill: MUTED, anchor: 'middle' }),
       `</g>`,
     )
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join('')}</svg>`
