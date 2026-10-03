@@ -414,7 +414,6 @@ function frame(t: number): string {
       `<g opacity="${endO}">`,
       `<circle cx="${W / 2}" cy="760" r="14" fill="${CLAY}"/>`,
       text(W / 2, 890, 'plan-progress', 88, { weight: 700, anchor: 'middle' }),
-      text(W / 2, 970, '6 種進度條風格，點齒輪一鍵切換', 40, { fill: INK, anchor: 'middle' }),
       text(W / 2, 1640, 'fork of zycck/claude-mods · by @0x5421', 28, { fill: MUTED, anchor: 'middle' }),
       `</g>`,
     )
