@@ -33,7 +33,7 @@ const FRAMES = STILLS ? `${OUT_DIR}/stills` : `${OUT_DIR}/frames`
 const W = 1080
 const H = 1920
 const FPS = 60
-const DURATION = 20
+const DURATION = 21.5
 const S = 2 // UI drawn at 2x so it reads on a phone
 
 // ---------- palette and type ----------
@@ -112,39 +112,60 @@ const lastOf = (t: number, times: number[]) => Math.max(...times.filter(x => x <
 const T = {
   titleOut: 1.5,
   uiIn: 1.7,
-  gearMove: [5.6, 6.4],
-  gearClick: 6.5,
-  panelIn: 6.6,
-  beadsMove: [7.2, 7.9],
-  beadsClick: 8.0,
-  transitMove: [8.7, 9.4],
-  transitClick: 9.5,
-  closeMove: [10.1, 10.8],
-  closeClick: 10.9,
-  panelOut: 11.0,
-  stepTen: 11.6,
-  allDone: 12.2,
-  inputMove: [12.7, 13.3],
-  inputClick: 13.4,
-  typeFrom: 13.5,
-  sendMove: [14.7, 15.1],
-  sendClick: 15.2,
+  agentsFold: 7.6, // the plugin folds finished strips after 5 s; shortened here
+  gearMove: [8.0, 8.8],
+  gearClick: 8.9,
+  panelIn: 9.0,
+  transitMove: [9.8, 10.6],
+  transitClick: 10.7,
+  closeMove: [11.5, 12.2],
+  closeClick: 12.3,
+  panelOut: 12.4,
+  stepTen: 13.0,
+  allDone: 13.6,
+  inputMove: [14.1, 14.7],
+  inputClick: 14.8,
+  typeFrom: 14.9,
+  sendMove: [16.1, 16.5],
+  sendClick: 16.6,
   leave: 0.8, // the bar's fade, slower than the plugin's 0.4 s so it reads on video
   collapse: 0.3,
-  cursorOut: [16.4, 16.7],
-  uiOut: 17.2,
-  endIn: 17.5,
+  cursorOut: [17.8, 18.1],
+  uiOut: 18.6,
+  endIn: 18.9,
+}
+// three subagents start under the bar, one stops for approval, all finish, then their strips fold away;
+// each run lists [time, state, tool] changes from its start
+type RunState = 'running' | 'waiting' | 'done'
+const RUNS: { id: string; title: string; at: number; steps: [number, RunState, string][] }[] = [
+  { id: 'a1', title: '讀取模組', at: 4.4, steps: [[4.4, 'running', 'Read'], [5.6, 'running', 'Grep'], [6.6, 'done', 'Done']] },
+  { id: 'a2', title: '量 API 延遲', at: 4.7, steps: [[4.7, 'running', 'Bash'], [5.9, 'done', 'Done']] },
+  { id: 'a3', title: '比對打包大小', at: 5.0, steps: [[5.0, 'running', 'Read'], [5.5, 'waiting', 'Needs approval'], [6.3, 'running', 'Bash'], [7.0, 'done', 'Done']] },
+]
+const AGENT_PACE = 14_000
+const AGENT_EVENTS = RUNS.flatMap(r => r.steps.map(([at]) => at))
+function agentsAt(t: number, now: number) {
+  if (t >= T.agentsFold) return null
+  const shown = RUNS.filter(r => t >= r.at).map(r => {
+    const [, state, tool] = [...r.steps].reverse().find(([at]) => t >= at) ?? r.steps[0]
+    const ended = state === 'done' ? r.steps[r.steps.length - 1][0] : null
+    // the clip runs fast, so each video second counts as AGENT_PACE seconds on the strips' elapsed times
+    return { id: r.id, title: r.title, state, tool, startedAt: now - (t - r.at) * AGENT_PACE, endedAt: ended === null ? null : now - (t - ended) * AGENT_PACE, depth: 0 }
+  })
+  return shown.length ? { shown, hidden: [] } : null
 }
 const MESSAGE = '接著幫我寫測試'
 const CHAR_S = 0.14
-const stepAt = (t: number) => (t >= T.allDone ? TOTAL_STEPS : t >= T.stepTen ? 9 : Math.min(8, 3 + Math.floor(Math.max(0, t - 2.2) / 0.85)))
-const styleAt = (t: number): StyleKey => (t < T.beadsClick ? 'segments' : t < T.transitClick ? 'beads' : 'transit')
+const STEP_S = 1.1
+const stepAt = (t: number) => (t >= T.allDone ? TOTAL_STEPS : t >= T.stepTen ? 9 : Math.min(8, 3 + Math.floor(Math.max(0, t - 2.2) / STEP_S)))
+const styleAt = (t: number): StyleKey => (t < T.transitClick ? 'beads' : 'transit')
 const typedAt = (t: number) => (t >= T.sendClick ? '' : MESSAGE.slice(0, clamp(Math.floor((t - T.typeFrom) / CHAR_S) + 1, 0, MESSAGE.length)))
 const captionAt = (t: number): [string, number] => {
-  if (t < 5.4) return ['Claude 做事時，進度一目了然', fade(t, 2.0, 2.4, 5.2, 5.4)]
-  if (t < 7.0) return ['點 ⚙ 打開設定面板', fade(t, 5.4, 5.7, 6.8, 7.0)]
+  if (t < 4.3) return ['Claude 做事時，進度一目了然', fade(t, 2.0, 2.4, 4.1, 4.3)]
+  if (t < 7.8) return ['Subagent 跑到哪也看得到', fade(t, 4.3, 4.6, 7.6, 7.8)]
+  if (t < 9.4) return ['點 ⚙ 打開設定面板', fade(t, 7.8, 8.1, 9.2, 9.4)]
   // the closing beat (the bar leaving after the next message) runs without a caption
-  return ['六種風格，點一下就換', fade(t, 7.0, 7.3, 10.7, 11.0)]
+  return ['六種風格，點一下就換', fade(t, 9.4, 9.7, 12.1, 12.4)]
 }
 
 // ---------- layout (px) ----------
@@ -161,8 +182,9 @@ const SP = 1.6
 const P_PAD = 16 * SP
 const P_W = (W - 2 * CARD_X - 2 * P_PAD) / SP // UI units
 const BAR_ROW = 48 // the bar's row, gone once the bar has left
-const BAR_X = 100
-const BAR_W = 285
+const BAR_X = 96
+// past 300 the strips under the bar also name each subagent's current tool
+const BAR_W = 301
 // UI units inside the window card, from its top-left inner corner
 const INPUT = { y: 48, h: 44 }
 const FOOT_Y = 117
@@ -176,19 +198,36 @@ const GEAR_U = { x: MODEL_END - textW(MODEL, 11.5) - 12 - 10, y: FOOT_Y - 4 }
 // how far the bar row has collapsed (0 = full, 1 = gone)
 const collapsedAt = (t: number) => easeInOut((t - T.sendClick - T.leave) / T.collapse)
 const leavingAt = (t: number) => clamp((t - T.sendClick) / T.leave)
-const inWindow = (t: number, u: Pt): Pt => ({ x: CARD_X + PAD + u.x * S, y: cardY(t) + PAD + (u.y - (u.y >= INPUT.y ? collapsedAt(t) * BAR_ROW : 0)) * S })
+// how much taller the bar's row is while subagent strips show under it
+const growAt = (t: number) => {
+  const now = 1_790_000_000_000 + t * 1000
+  const v = agentsAt(t, now)
+  if (!v) return 0
+  const p = { ...plan(stepAt(t), now), agents: v.shown }
+  const look = STYLES[styleAt(t)]
+  return look.draw(p as never, BAR_W, now, v).height - look.draw(p as never, BAR_W, now, null).height
+}
+const inWindow = (t: number, u: Pt): Pt => ({ x: CARD_X + PAD + u.x * S, y: cardY(t) + PAD + (u.y + (u.y >= INPUT.y ? growAt(t) - collapsedAt(t) * BAR_ROW : 0)) * S })
 
 // ---------- scene pieces ----------
 function windowCard(t: number, style: StyleKey, gearHot: boolean): string {
   const now = 1_790_000_000_000 + t * 1000
-  const p = plan(stepAt(t), now)
+  const v = agentsAt(t, now)
+  const p = { ...plan(stepAt(t), now), ...(v ? { agents: v.shown } : {}) }
   const look = STYLES[style]
-  const shift = collapsedAt(t) * BAR_ROW
+  const grow = growAt(t)
+  const shift = collapsedAt(t) * BAR_ROW - grow
   const leave = leavingAt(t)
   const rowO = 1 - ramp(t, T.sendClick + T.leave - 0.1, T.sendClick + T.leave + 0.05)
-  // the bar redraws when a step moves and when its style changes (none of the window's styles keeps a clock)
-  const stepMoves = [1, 2, 3, 4, 5].map(k => 2.2 + 0.85 * k)
-  const bar = drawnAt(lastOf(t, [T.uiIn, ...stepMoves, T.beadsClick, T.transitClick, T.stepTen, T.allDone]), slot(look.draw(p as never, BAR_W, now, null), BAR_W, 36))
+  // the bar redraws when a step moves, when its style changes, on each subagent change,
+  // and every second while subagents run (the plugin's clock ticks for their elapsed times)
+  const stepMoves = [1, 2, 3, 4, 5].map(k => 2.2 + STEP_S * k)
+  const agentTicks = Array.from({ length: Math.ceil(T.agentsFold - RUNS[0].at) }, (_, i) => RUNS[0].at + i + 1)
+  const redraws = [T.uiIn, ...stepMoves, ...AGENT_EVENTS, ...agentTicks.filter(x => x < T.agentsFold), T.agentsFold, T.transitClick, T.stepTen, T.allDone]
+  // with strips the drawing grows downward from where the plain bar sits
+  const plainH = look.draw(p as never, BAR_W, now, null).height
+  const drawn = look.draw(p as never, BAR_W, now, v)
+  const bar = drawnAt(lastOf(t, redraws), `<svg width="${BAR_W}" height="${36 + grow}" overflow="visible"><g transform="translate(0 ${(36 - plainH) / 2})">${drawn.svg}</g></svg>`)
   const glyph = look.glyph(p as never)
   const typed = typedAt(t)
   const isTyping = t >= T.inputClick && t < T.sendClick
@@ -276,7 +315,7 @@ function panelCard(t: number, style: StyleKey): string {
   const L = paneLayout(style, now)
   const closeX = P_W - btnW('儲存並關閉')
   // the pane redraws when it opens and on every press in it
-  const paneDrawn = lastOf(t, [T.panelIn, T.beadsClick, T.transitClick])
+  const paneDrawn = lastOf(t, [T.panelIn, T.transitClick])
   const tiles = PANE_STYLES.map(([id, name], i) => {
     const ty = L.tileY(i)
     const isCurrent = id === style
@@ -319,7 +358,6 @@ function cursor(t: number): string {
     const b = paneLayout(style, now).useBtn(i, false)
     return inPanel(at, { x: b.x + btnW('使用') - 4, y: b.y + 13 })
   }
-  const beads = tileAt(2, 'segments', T.beadsClick)
   const transit = tileAt(4, 'beads', T.transitClick)
   const close = inPanel(T.closeClick, { x: P_W - 14, y: 22 + 12 })
   const input = inWindow(T.inputClick, { x: 150, y: INPUT.y + 26 })
@@ -327,17 +365,16 @@ function cursor(t: number): string {
   const lerp = (a: Pt, b: Pt, e: number) => ({ x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e })
   const legs: [number[], Pt, Pt][] = [
     [T.gearMove, home, gear],
-    [T.beadsMove, gear, beads],
-    [T.transitMove, beads, transit],
+    [T.transitMove, gear, transit],
     [T.closeMove, transit, close],
     [T.inputMove, close, input],
     [T.sendMove, input, send],
   ]
   let at = home
   for (const [[a, b], from, to] of legs) if (t >= a) at = lerp(from, to, ramp(t, a, b))
-  const opacity = fade(t, 5.4, 5.6, T.cursorOut[0], T.cursorOut[1])
+  const opacity = fade(t, T.gearMove[0] - 0.2, T.gearMove[0], T.cursorOut[0], T.cursorOut[1])
   if (opacity <= 0) return ''
-  const clicks = [T.gearClick, T.beadsClick, T.transitClick, T.closeClick, T.inputClick, T.sendClick]
+  const clicks = [T.gearClick, T.transitClick, T.closeClick, T.inputClick, T.sendClick]
   const ring = clicks
     .map(c => {
       const k = (t - c) / 0.4
@@ -357,7 +394,7 @@ function frame(t: number): string {
   const panelDy = (1 - ramp(t, T.panelIn, T.panelIn + 0.35)) * 24 + ramp(t, T.panelOut, T.panelOut + 0.3) * 24
   const endO = ramp(t, T.endIn, T.endIn + 0.5)
   const [caption, capO] = captionAt(t)
-  const gearHot = t > 6.25 && t < 6.9
+  const gearHot = t > T.gearClick - 0.25 && t < T.gearClick + 0.4
   const parts = [`<rect width="${W}" height="${H}" fill="${BG}"/>`]
   if (titleO > 0)
     parts.push(
