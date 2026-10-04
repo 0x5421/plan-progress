@@ -2,6 +2,7 @@
 // captures each frame in headless Chrome over the DevTools protocol, then joins them with ffmpeg.
 // Run: node --experimental-strip-types promo/make-video.mts [outDir] [--stills=6.8,9.6,15.5]
 // --stills writes only those moments as PNGs into outDir/stills, to check a layout without the full render.
+// --audio-only writes just the soundtrack (outDir/soundtrack.wav), to listen to it without the full render.
 import { spawn, execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { stripTypeScriptTypes } from 'node:module'
@@ -28,6 +29,7 @@ const ORIGINAL_H = 22
 const args = process.argv.slice(2)
 const stillsArg = args.find(a => a.startsWith('--stills='))
 const STILLS = stillsArg ? stillsArg.slice('--stills='.length).split(',').map(Number) : null
+const AUDIO_ONLY = args.includes('--audio-only')
 const OUT_DIR = args.find(a => !a.startsWith('--')) ?? new URL('./out', import.meta.url).pathname
 const FRAMES = STILLS ? `${OUT_DIR}/stills` : `${OUT_DIR}/frames`
 const W = 1080
@@ -471,10 +473,148 @@ async function capture(): Promise<void> {
   }
 }
 
-await capture()
-if (STILLS) {
-  console.log(`stills: ${FRAMES}`)
+// ---------- soundtrack: synthesized music under sound effects placed on the timeline ----------
+// Everything is generated here (no downloaded music), except the plugin's own decision and done sounds,
+// which play where the plugin would play them.
+const SR = 44100
+function soundtrack(): Float32Array[] {
+  const n = Math.ceil(DURATION * SR)
+  const L = new Float32Array(n)
+  const Rt = new Float32Array(n)
+  const add = (at: number, mono: Float32Array, gain: number, pan = 0) => {
+    const o = Math.round(at * SR)
+    const gl = gain * Math.min(1, 1 - pan)
+    const gr = gain * Math.min(1, 1 + pan)
+    for (let i = 0; i < mono.length && o + i < n; i++) {
+      if (o + i < 0) continue
+      L[o + i] += mono[i] * gl
+      Rt[o + i] += mono[i] * gr
+    }
+  }
+  const make = (sec: number, f: (t: number, i: number) => number) => Float32Array.from({ length: Math.round(sec * SR) }, (_, i) => f(i / SR, i))
+  const env = (t: number, a: number, d: number) => (t < a ? t / a : Math.exp(-(t - a) / d))
+  // white noise, repeatable
+  let seed = 7
+  const noise = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648) * 2 - 1
+  const lowpass = (x: Float32Array, cutoff: number) => {
+    const k = 1 - Math.exp((-2 * Math.PI * cutoff) / SR)
+    let y = 0
+    return x.map(v => (y += k * (v - y)))
+  }
+  const highpass = (x: Float32Array, cutoff: number) => {
+    const lp = lowpass(x, cutoff)
+    return x.map((v, i) => v - lp[i])
+  }
+  const hz = (midi: number) => 440 * Math.pow(2, (midi - 69) / 12)
+  const readWav = (name: string) => {
+    const buf = readFileSync(new URL(`../plugins/plan-progress/sounds/${name}.wav`, import.meta.url))
+    const at = buf.indexOf('data') + 8 // 16-bit mono PCM, as the plugin ships them
+    return Float32Array.from({ length: (buf.length - at) >> 1 }, (_, i) => buf.readInt16LE(at + i * 2) / 32768)
+  }
+
+  // music: 96 BPM, one chord a bar (Cmaj7, Am7, Fmaj7, G6), a soft pad, a bass note, a light kick and hat
+  const BEAT = 60 / 96
+  const BAR = BEAT * 4
+  const CHORDS = [
+    [48, [60, 64, 67, 71]],
+    [45, [57, 60, 64, 67]],
+    [41, [57, 60, 64, 65]],
+    [43, [55, 59, 62, 64]],
+  ] as const
+  const musicIn = 0.3
+  for (let b = 0; musicIn + b * BAR < DURATION; b++) {
+    const [root, tones] = CHORDS[b % CHORDS.length]
+    const at = musicIn + b * BAR
+    const pad = make(BAR + 0.6, t => {
+      const e = Math.min(1, t / 0.5) * Math.min(1, (BAR + 0.6 - t) / 0.6)
+      return e * tones.reduce((sum, m, k) => sum + (Math.sin(2 * Math.PI * hz(m) * t + k) + 0.3 * Math.sin(2 * Math.PI * hz(m) * 1.004 * t)) / tones.length, 0)
+    })
+    add(at, lowpass(pad, 1800), 0.12, 0)
+    const bass = make(BAR, t => Math.sin(2 * Math.PI * hz(root) * t) * env(t, 0.02, 0.9))
+    add(at, bass, 0.13)
+    // a plucked arpeggio on the eighths, once the interface is on screen
+    if (at >= T.uiIn - BAR)
+      for (let k = 0; k < 8; k++) {
+        const m = tones[[0, 2, 1, 3, 2, 1, 3, 2][k]] + 12
+        const pluck = make(0.5, t => (Math.sin(2 * Math.PI * hz(m) * t) + 0.25 * Math.sin(4 * Math.PI * hz(m) * t)) * env(t, 0.004, 0.16))
+        add(at + (k * BEAT) / 2, pluck, 0.05, k % 2 ? 0.25 : -0.25)
+      }
+    for (let k = 0; k < 4; k++) {
+      const t0 = at + k * BEAT
+      if (t0 < T.uiIn) continue
+      if (k % 2 === 0) add(t0, make(0.3, t => Math.sin(2 * Math.PI * (50 + 70 * Math.exp(-t * 30)) * t) * env(t, 0.002, 0.09)), 0.17)
+      add(t0 + BEAT / 2, highpass(make(0.06, t => noise() * env(t, 0.001, 0.015)), 6000), 0.04, 0.3)
+    }
+  }
+  // the music fades in under the title and out under the end card
+  for (let i = 0; i < n; i++) {
+    const t = i / SR
+    const g = Math.min(1, t / 1.2) * Math.min(1, (DURATION - t) / 1.6)
+    L[i] *= g
+    Rt[i] *= g
+  }
+
+  // effects
+  const click = () => highpass(make(0.04, t => (noise() * 0.6 + Math.sin(2 * Math.PI * 2400 * t)) * env(t, 0.0005, 0.006)), 900)
+  const key = () => highpass(make(0.035, t => noise() * env(t, 0.0005, 0.005)), 2500)
+  const whoosh = (sec: number, up: boolean) => {
+    const raw = make(sec, t => noise() * Math.sin((Math.PI * t) / sec) ** 2)
+    return lowpass(raw, up ? 2600 : 1600)
+  }
+  const blip = (f: number) => make(0.18, t => Math.sin(2 * Math.PI * f * t) * env(t, 0.003, 0.05))
+  const chime = (notes: number[]) => make(1.8, t => notes.reduce((sum, m, k) => sum + Math.sin(2 * Math.PI * hz(m) * t) * env(Math.max(0, t - k * 0.06), 0.005, 0.6) * (t >= k * 0.06 ? 1 : 0), 0) / notes.length)
+
+  add(0.25, chime([72, 79]), 0.35) // the title
+  for (const c of [T.gearClick, T.transitClick, T.closeClick, T.inputClick, T.sendClick]) add(c, click(), 0.9)
+  add(T.panelIn, whoosh(0.35, true), 0.32)
+  add(T.panelOut, whoosh(0.3, false), 0.25)
+  for (const r of RUNS) add(r.at, blip(1320), 0.28, 0.2) // each subagent starting
+  const waiting = RUNS.flatMap(r => r.steps.filter(([, st]) => st === 'waiting').map(([at]) => at))
+  for (const at of waiting) add(at, readWav('decision'), 0.8)
+  for (let i = 0; i < MESSAGE.length; i++) add(T.typeFrom + i * CHAR_S, key(), 0.6, (i % 3) * 0.1 - 0.1)
+  add(T.allDone, readWav('done'), 0.8)
+  add(T.sendClick + 0.05, whoosh(0.5, true), 0.3) // the message goes, the finished bar leaves
+  add(T.endIn, chime([60, 67, 72, 76]), 0.35)
+
+  // keep peaks under full scale
+  const peak = [L, Rt].reduce((m, ch) => ch.reduce((mm, v) => Math.max(mm, Math.abs(v)), m), 0)
+  if (peak > 0.89) for (let i = 0; i < n; i++) (L[i] *= 0.89 / peak), (Rt[i] *= 0.89 / peak)
+  return [L, Rt]
+}
+function writeWav(path: string, [L, Rt]: Float32Array[]) {
+  const n = L.length
+  const buf = Buffer.alloc(44 + n * 4)
+  buf.write('RIFF', 0)
+  buf.writeUInt32LE(36 + n * 4, 4)
+  buf.write('WAVEfmt ', 8)
+  buf.writeUInt32LE(16, 16)
+  buf.writeUInt16LE(1, 20)
+  buf.writeUInt16LE(2, 22)
+  buf.writeUInt32LE(SR, 24)
+  buf.writeUInt32LE(SR * 4, 28)
+  buf.writeUInt16LE(4, 32)
+  buf.writeUInt16LE(16, 34)
+  buf.write('data', 36)
+  buf.writeUInt32LE(n * 4, 40)
+  for (let i = 0; i < n; i++) {
+    buf.writeInt16LE(Math.round(clamp(L[i], -1, 1) * 32767), 44 + i * 4)
+    buf.writeInt16LE(Math.round(clamp(Rt[i], -1, 1) * 32767), 46 + i * 4)
+  }
+  writeFileSync(path, buf)
+}
+
+mkdirSync(OUT_DIR, { recursive: true })
+const AUDIO = `${OUT_DIR}/soundtrack.wav`
+if (AUDIO_ONLY) {
+  writeWav(AUDIO, soundtrack())
+  console.log(`soundtrack: ${AUDIO}`)
 } else {
-  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', `${FRAMES}/f%04d.png`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '16', '-preset', 'slow', '-movflags', '+faststart', `${OUT_DIR}/plan-progress-promo.mp4`], { stdio: 'inherit' })
-  console.log(`done: ${OUT_DIR}/plan-progress-promo.mp4`)
+  await capture()
+  if (STILLS) {
+    console.log(`stills: ${FRAMES}`)
+  } else {
+    writeWav(AUDIO, soundtrack())
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', `${FRAMES}/f%04d.png`, '-i', AUDIO, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '16', '-preset', 'slow', '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-ar', '44100', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', `${OUT_DIR}/plan-progress-promo.mp4`], { stdio: 'inherit' })
+    console.log(`done: ${OUT_DIR}/plan-progress-promo.mp4`)
+  }
 }
