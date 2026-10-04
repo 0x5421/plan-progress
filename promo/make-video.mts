@@ -474,8 +474,8 @@ async function capture(): Promise<void> {
 }
 
 // ---------- soundtrack: synthesized music under sound effects placed on the timeline ----------
-// Everything is generated here (no downloaded music), except the plugin's own decision and done sounds,
-// which play where the plugin would play them.
+// Everything is generated here (no downloaded music), except the plugin's own done sound,
+// which plays where the plugin would play it.
 const SR = 44100
 function soundtrack(): Float32Array[] {
   const n = Math.ceil(DURATION * SR)
@@ -512,70 +512,61 @@ function soundtrack(): Float32Array[] {
     return Float32Array.from({ length: (buf.length - at) >> 1 }, (_, i) => buf.readInt16LE(at + i * 2) / 32768)
   }
 
-  // music: 96 BPM, one chord a bar (Cmaj7, Am7, Fmaj7, G6), a soft pad, a bass note, a light kick and hat
-  const BEAT = 60 / 96
+  // music: an upbeat, light electronic loop at 118 BPM in the spirit of product promos. Short plucked
+  // chords instead of held pads, a pulsing bass, kick on every beat, claps on 2 and 4, eighth-note hats.
+  // Bright triads, one a bar: C, G, Am, F.
+  const BEAT = 60 / 118
   const BAR = BEAT * 4
   const CHORDS = [
-    [48, [60, 64, 67, 71]],
-    [45, [57, 60, 64, 67]],
-    [41, [57, 60, 64, 65]],
-    [43, [55, 59, 62, 64]],
+    [36, [60, 64, 67]],
+    [43, [59, 62, 67]],
+    [45, [60, 64, 69]],
+    [41, [60, 65, 69]],
   ] as const
-  const musicIn = 0.3
+  const saw = (f: number, t: number) => 2 * ((f * t) % 1) - 1
+  const drumsFrom = T.uiIn - 0.2
+  const drumsTo = T.uiOut + 0.6
+  const musicIn = 0.15
   for (let b = 0; musicIn + b * BAR < DURATION; b++) {
     const [root, tones] = CHORDS[b % CHORDS.length]
     const at = musicIn + b * BAR
-    const pad = make(BAR + 0.6, t => {
-      const e = Math.min(1, t / 0.5) * Math.min(1, (BAR + 0.6 - t) / 0.6)
-      return e * tones.reduce((sum, m, k) => sum + (Math.sin(2 * Math.PI * hz(m) * t + k) + 0.3 * Math.sin(2 * Math.PI * hz(m) * 1.004 * t)) / tones.length, 0)
-    })
-    add(at, lowpass(pad, 1800), 0.12, 0)
-    const bass = make(BAR, t => Math.sin(2 * Math.PI * hz(root) * t) * env(t, 0.02, 0.9))
-    add(at, bass, 0.13)
-    // a plucked arpeggio on the eighths, once the interface is on screen
-    if (at >= T.uiIn - BAR)
-      for (let k = 0; k < 8; k++) {
-        const m = tones[[0, 2, 1, 3, 2, 1, 3, 2][k]] + 12
-        const pluck = make(0.5, t => (Math.sin(2 * Math.PI * hz(m) * t) + 0.25 * Math.sin(4 * Math.PI * hz(m) * t)) * env(t, 0.004, 0.16))
-        add(at + (k * BEAT) / 2, pluck, 0.05, k % 2 ? 0.25 : -0.25)
-      }
-    for (let k = 0; k < 4; k++) {
-      const t0 = at + k * BEAT
-      if (t0 < T.uiIn) continue
-      if (k % 2 === 0) add(t0, make(0.3, t => Math.sin(2 * Math.PI * (50 + 70 * Math.exp(-t * 30)) * t) * env(t, 0.002, 0.09)), 0.17)
-      add(t0 + BEAT / 2, highpass(make(0.06, t => noise() * env(t, 0.001, 0.015)), 6000), 0.04, 0.3)
+    // plucked chord stabs on a syncopated 16th grid
+    for (const s of [0, 3, 6, 8, 11, 14]) {
+      const stab = make(0.35, t => (tones.reduce((sum, m) => sum + saw(hz(m), t) + 0.5 * Math.sin(2 * Math.PI * hz(m + 12) * t), 0) / tones.length) * env(t, 0.003, 0.07))
+      add(at + (s * BEAT) / 4, lowpass(stab, 2600), 0.11, s % 2 ? 0.2 : -0.2)
+    }
+    // a little lead motif on top, every other bar
+    if (b % 2 === 1)
+      [0, 2, 3, 5].forEach((s, k) => {
+        const m = tones[[2, 1, 2, 0][k]] + 12
+        add(at + BAR / 2 + (s * BEAT) / 4, make(0.3, t => Math.sin(2 * Math.PI * hz(m) * t) * env(t, 0.004, 0.09)), 0.07, 0.1)
+      })
+    const inDrums = at >= drumsFrom - BAR && at < drumsTo
+    for (let e = 0; e < 8; e++) {
+      const t0 = at + (e * BEAT) / 2
+      if (t0 >= DURATION) break
+      const drums = t0 >= drumsFrom && t0 < drumsTo
+      // pulsing bass on every eighth, a touch shorter off the beat
+      if (inDrums || b > 0) add(t0, lowpass(make(0.25, t => (Math.sin(2 * Math.PI * hz(root) * t) + 0.35 * saw(hz(root), t)) * env(t, 0.003, e % 2 ? 0.06 : 0.1)), 500), drums ? 0.2 : 0.12)
+      if (!drums) continue
+      if (e % 2 === 0) add(t0, make(0.25, t => Math.sin(2 * Math.PI * (48 + 90 * Math.exp(-t * 35)) * t) * env(t, 0.001, 0.07)), 0.3)
+      if (e === 2 || e === 6) add(t0, highpass(lowpass(make(0.2, t => noise() * env(t, 0.001, 0.045)), 3500), 900), 0.22)
+      add(t0, highpass(make(0.05, t => noise() * env(t, 0.0005, e % 2 ? 0.018 : 0.008)), 7000), e % 2 ? 0.07 : 0.04, 0.25)
     }
   }
   // the music fades in under the title and out under the end card
   for (let i = 0; i < n; i++) {
     const t = i / SR
-    const g = Math.min(1, t / 1.2) * Math.min(1, (DURATION - t) / 1.6)
+    const g = Math.min(1, t / 0.6) * Math.min(1, (DURATION - t) / 1.4)
     L[i] *= g
     Rt[i] *= g
   }
 
-  // effects
+  // effects: only what really sounds. The mouse clicks, and the plugin's own done sound when the bar finishes;
+  // the plugin plays nothing for subagents under a named bar, for typing or for the pane
   const click = () => highpass(make(0.04, t => (noise() * 0.6 + Math.sin(2 * Math.PI * 2400 * t)) * env(t, 0.0005, 0.006)), 900)
-  const key = () => highpass(make(0.035, t => noise() * env(t, 0.0005, 0.005)), 2500)
-  const whoosh = (sec: number, up: boolean) => {
-    const raw = make(sec, t => noise() * Math.sin((Math.PI * t) / sec) ** 2)
-    return lowpass(raw, up ? 2600 : 1600)
-  }
-  const blip = (f: number) => make(0.18, t => Math.sin(2 * Math.PI * f * t) * env(t, 0.003, 0.05))
-  const chime = (notes: number[]) => make(1.8, t => notes.reduce((sum, m, k) => sum + Math.sin(2 * Math.PI * hz(m) * t) * env(Math.max(0, t - k * 0.06), 0.005, 0.6) * (t >= k * 0.06 ? 1 : 0), 0) / notes.length)
-
-  add(0.25, chime([72, 79]), 0.35) // the title
   for (const c of [T.gearClick, T.transitClick, T.closeClick, T.inputClick, T.sendClick]) add(c, click(), 0.9)
-  add(T.panelIn, whoosh(0.35, true), 0.32)
-  add(T.panelOut, whoosh(0.3, false), 0.25)
-  for (const r of RUNS) add(r.at, blip(1320), 0.28, 0.2) // each subagent starting
-  const waiting = RUNS.flatMap(r => r.steps.filter(([, st]) => st === 'waiting').map(([at]) => at))
-  for (const at of waiting) add(at, readWav('decision'), 0.8)
-  for (let i = 0; i < MESSAGE.length; i++) add(T.typeFrom + i * CHAR_S, key(), 0.6, (i % 3) * 0.1 - 0.1)
-  add(T.allDone, readWav('done'), 0.8)
-  add(T.sendClick + 0.05, whoosh(0.5, true), 0.3) // the message goes, the finished bar leaves
-  add(T.endIn, chime([60, 67, 72, 76]), 0.35)
-
+  add(T.allDone, readWav('done'), 0.85)
   // keep peaks under full scale
   const peak = [L, Rt].reduce((m, ch) => ch.reduce((mm, v) => Math.max(mm, Math.abs(v)), m), 0)
   if (peak > 0.89) for (let i = 0; i < n; i++) (L[i] *= 0.89 / peak), (Rt[i] *= 0.89 / peak)
