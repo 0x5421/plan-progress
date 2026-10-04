@@ -512,9 +512,9 @@ function soundtrack(): Float32Array[] {
     return Float32Array.from({ length: (buf.length - at) >> 1 }, (_, i) => buf.readInt16LE(at + i * 2) / 32768)
   }
 
-  // music: an upbeat, light electronic loop at 118 BPM in the spirit of product promos. Short plucked
-  // chords instead of held pads, a pulsing bass, kick on every beat, claps on 2 and 4, eighth-note hats.
-  // Bright triads, one a bar: C, G, Am, F.
+  // music: a light, uncluttered loop at 118 BPM in the spirit of product promos. A few soft plucked chords
+  // a bar, a bass note on each beat, a kick on 1 and 3 and a quiet off-beat hat; no claps, nothing held.
+  // Bright triads, one a bar: C, G, Am, F. It sits under the clicks and the done sound, not over them.
   const BEAT = 60 / 118
   const BAR = BEAT * 4
   const CHORDS = [
@@ -531,27 +531,26 @@ function soundtrack(): Float32Array[] {
     const [root, tones] = CHORDS[b % CHORDS.length]
     const at = musicIn + b * BAR
     // plucked chord stabs on a syncopated 16th grid
-    for (const s of [0, 3, 6, 8, 11, 14]) {
-      const stab = make(0.35, t => (tones.reduce((sum, m) => sum + saw(hz(m), t) + 0.5 * Math.sin(2 * Math.PI * hz(m + 12) * t), 0) / tones.length) * env(t, 0.003, 0.07))
-      add(at + (s * BEAT) / 4, lowpass(stab, 2600), 0.11, s % 2 ? 0.2 : -0.2)
+    for (const s of [0, 6, 10]) {
+      const stab = make(0.4, t => (tones.reduce((sum, m) => sum + Math.sin(2 * Math.PI * hz(m) * t) + 0.2 * saw(hz(m), t), 0) / tones.length) * env(t, 0.004, 0.1))
+      add(at + (s * BEAT) / 4, lowpass(stab, 1600), 0.09, s === 6 ? 0.2 : -0.2)
     }
     // a little lead motif on top, every other bar
     if (b % 2 === 1)
       [0, 2, 3, 5].forEach((s, k) => {
         const m = tones[[2, 1, 2, 0][k]] + 12
-        add(at + BAR / 2 + (s * BEAT) / 4, make(0.3, t => Math.sin(2 * Math.PI * hz(m) * t) * env(t, 0.004, 0.09)), 0.07, 0.1)
+        add(at + BAR / 2 + (s * BEAT) / 4, make(0.3, t => Math.sin(2 * Math.PI * hz(m) * t) * env(t, 0.004, 0.09)), 0.05, 0.1)
       })
     const inDrums = at >= drumsFrom - BAR && at < drumsTo
     for (let e = 0; e < 8; e++) {
       const t0 = at + (e * BEAT) / 2
       if (t0 >= DURATION) break
       const drums = t0 >= drumsFrom && t0 < drumsTo
-      // pulsing bass on every eighth, a touch shorter off the beat
-      if (inDrums || b > 0) add(t0, lowpass(make(0.25, t => (Math.sin(2 * Math.PI * hz(root) * t) + 0.35 * saw(hz(root), t)) * env(t, 0.003, e % 2 ? 0.06 : 0.1)), 500), drums ? 0.2 : 0.12)
+      // a bass note on each beat
+      if (e % 2 === 0 && (inDrums || b > 0)) add(t0, lowpass(make(0.4, t => (Math.sin(2 * Math.PI * hz(root) * t) + 0.15 * saw(hz(root), t)) * env(t, 0.004, 0.16)), 400), drums ? 0.15 : 0.1)
       if (!drums) continue
-      if (e % 2 === 0) add(t0, make(0.25, t => Math.sin(2 * Math.PI * (48 + 90 * Math.exp(-t * 35)) * t) * env(t, 0.001, 0.07)), 0.3)
-      if (e === 2 || e === 6) add(t0, highpass(lowpass(make(0.2, t => noise() * env(t, 0.001, 0.045)), 3500), 900), 0.22)
-      add(t0, highpass(make(0.05, t => noise() * env(t, 0.0005, e % 2 ? 0.018 : 0.008)), 7000), e % 2 ? 0.07 : 0.04, 0.25)
+      if (e === 0 || e === 4) add(t0, make(0.25, t => Math.sin(2 * Math.PI * (48 + 80 * Math.exp(-t * 35)) * t) * env(t, 0.001, 0.07)), 0.2)
+      if (e % 2) add(t0, highpass(make(0.04, t => noise() * env(t, 0.0005, 0.01)), 8000), 0.025, 0.25)
     }
   }
   // the music fades in under the title and out under the end card
@@ -565,8 +564,8 @@ function soundtrack(): Float32Array[] {
   // effects: only what really sounds. The mouse clicks, and the plugin's own done sound when the bar finishes;
   // the plugin plays nothing for subagents under a named bar, for typing or for the pane
   const click = () => highpass(make(0.04, t => (noise() * 0.6 + Math.sin(2 * Math.PI * 2400 * t)) * env(t, 0.0005, 0.006)), 900)
-  for (const c of [T.gearClick, T.transitClick, T.closeClick, T.inputClick, T.sendClick]) add(c, click(), 0.9)
-  add(T.allDone, readWav('done'), 0.85)
+  for (const c of [T.gearClick, T.transitClick, T.closeClick, T.inputClick, T.sendClick]) add(c, click(), 0.45)
+  add(T.allDone, readWav('done'), 2.2)
   // keep peaks under full scale
   const peak = [L, Rt].reduce((m, ch) => ch.reduce((mm, v) => Math.max(mm, Math.abs(v)), m), 0)
   if (peak > 0.89) for (let i = 0; i < n; i++) (L[i] *= 0.89 / peak), (Rt[i] *= 0.89 / peak)
@@ -605,7 +604,7 @@ if (AUDIO_ONLY) {
     console.log(`stills: ${FRAMES}`)
   } else {
     writeWav(AUDIO, soundtrack())
-    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', `${FRAMES}/f%04d.png`, '-i', AUDIO, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '16', '-preset', 'slow', '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-ar', '44100', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', `${OUT_DIR}/plan-progress-promo.mp4`], { stdio: 'inherit' })
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', `${FRAMES}/f%04d.png`, '-i', AUDIO, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '16', '-preset', 'slow', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', `${OUT_DIR}/plan-progress-promo.mp4`], { stdio: 'inherit' })
     console.log(`done: ${OUT_DIR}/plan-progress-promo.mp4`)
   }
 }
