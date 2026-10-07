@@ -38,16 +38,32 @@ const FPS = 60
 const DURATION = 28
 
 // ---------- palette and type ----------
-const BG = '#F5F3EE'
+// the backdrop and the title and end cards use the app's own colour tokens (read from Claude.app's bundle):
+// bg-200 #F5F4ED, text-000 #141413, text-400 #73726C, brand-000 #C6613F.
+// The window's colours are sampled from a real screenshot of the desktop app's Code tab.
+const BG = '#F5F4ED'
 const CARD = '#FFFFFF'
-const INK = '#1F1E1C'
-const MUTED = '#86857F'
-const LINE = '#E4E1D8'
+const INK = '#141413'
+const INK2 = '#50504E' // icons and secondary labels
+const MUTED = '#868681' // group headers, the percent beside a bar
+const LINE = '#E5E5E5'
 const CLAY = '#C6613F'
-const NATIVE = '#ECEAE4' // the desktop's grey native button
-const SIDE = '#F1EFE9' // the sessions list and the title bar
-const SIDE_ON = '#E3E0D7' // the open session's row in the list
-const BUBBLE = '#ECE9E1' // the person's message
+const NATIVE = '#EDEDEB' // the desktop's grey native button
+const MAIN_BG = '#FCFCFC' // the conversation area
+const SIDE = '#FAFAF8' // the sessions list
+const SIDE_LINE = '#EBEBE9'
+const SIDE_ON = '#EEEBEA' // the open session's row in the list
+const SIDE_INK = '#50504E'
+const HAIR = '#E2E2E0'
+const BAND = '#F0F0F0' // the grey band the plugin's bars sit in, also the person's message
+const INPUT_LINE = '#E2E2E2'
+const PLACEHOLDER = '#888888'
+const FOOT_INK = '#535350'
+const TAG = '#E4E4E4'
+const TAG_INK = '#545451'
+const SEG = '#EFEFEC' // the chat / code switch in the title bar
+const BADGE = '#CBE4FF' // the session's laptop badge
+const BADGE_INK = '#2C84DB'
 const FONT = "-apple-system,BlinkMacSystemFont,'PingFang TC','Helvetica Neue',sans-serif"
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c)
@@ -204,39 +220,46 @@ const captionAt = (t: number): [string, number] => {
 }
 
 // ---------- layout (px) ----------
-// the whole app window: a title bar, the sessions list on the left, the open session on the right
-// (its name, its conversation, then its bars and the prompt at the bottom)
-const WIN = { x: 40, y: 380, w: 1000, h: 1180 }
-const TITLE_H = 48
-const SIDE_W = 260
+// The Claude desktop app's Code tab, measured from a real screenshot (2000 px wide, the window 1861 px):
+// a title bar, the sessions list on the left, the open session on the right with its name, its conversation,
+// the plugin's bars in a grey rounded band, the prompt and the footer. Drawn K times the screenshot's size in a
+// window narrowed to the frame, as the app lays itself out in a narrow window.
+const K = 1.1
+const WIN = { x: 40, y: 360, w: 1000, h: 1220 }
+const WIN_B = WIN.y + WIN.h
+const TITLE_H = 66 * K
+const SIDE_W = Math.round(358 * K)
 const MAIN_X = WIN.x + SIDE_W
 const MAIN_W = WIN.w - SIDE_W
-const MPAD = 24
-const IN_W = 448 // UI units
-const UI_S = (MAIN_W - 2 * MPAD) / IN_W // the prompt area is drawn at this scale
-const WIN_BOTTOM = WIN.y + WIN.h - MPAD
+const COL_X = MAIN_X + 26 // the conversation column, the band and the prompt share these edges
+const COL_W = MAIN_W - 52
+const COL_R = COL_X + COL_W
+const BAND_PAD_X = 14
+const BAND_PAD_Y = 9
+const IN_W = 448 // UI units: the plugin's row inside the band
+const UI_S = (COL_W - 2 * BAND_PAD_X) / IN_W
+const INPUT_H = 54 * K
+const INPUT_TOP = WIN_B - 47 * K - INPUT_H
+const FOOT_Y = WIN_B - 22 * K // the footer's text baseline
 const BAR_ROW = 48 // the bar's row, gone once the bar has left
-// UI units inside the prompt area, from the top of the bar area
-const INPUT = { y: 48, h: 44 }
-const FOOT_Y = 117
-const BLOCK_BELOW_INPUT = 80 // from the input's top to the bottom of the footer
+const ROWS_GAP = 12 // UI units between the own row and the input in the plugin's own layout
 const MODEL = 'Opus 5.5'
-const EFFORT = 'Medium'
-const SEND = { x: IN_W - 22, y: INPUT.y + 22 }
-const EFFORT_END = IN_W
-const MODEL_END = EFFORT_END - textW(EFFORT, 11.5) - 12
-const GEAR_U = { x: MODEL_END - textW(MODEL, 11.5) - 12 - 10, y: FOOT_Y - 4 }
+// the footer's right group, from the column's right edge (screenshot: gear 1500, model 1537, effort 1628, edge 1697)
+const GEAR_PT = { x: COL_R - 197 * K, y: FOOT_Y - 6 * K }
+const SEND_PT = { x: COL_R - 28 * K, y: INPUT_TOP + INPUT_H / 2 }
+const INPUT_PT = { x: COL_X + 200, y: INPUT_TOP + INPUT_H / 2 }
 
 // ---------- the sessions: shop (where the clip starts), bot (where it switches to), api (running throughout) ----------
 type Which = 'shop' | 'bot'
 type Row = { folder: string; p: ReturnType<typeof other> }
 const titleOf = (r: Row) => `${r.folder} · ${r.p.title}`
 const whichAt = (t: number): Which => (t < T.botClick ? 'shop' : 'bot')
-const SIDEBAR = [
-  { id: 'shop', title: '重構訂單模組', folder: 'shop' },
-  { id: 'bot', title: '回測', folder: 'bot' },
-  { id: 'api', title: '部署', folder: 'api' },
-]
+// made-up projects and sessions; the list's own entries (新增, 成品…) are the app's
+const SESSIONS: Record<Which | 'api', { title: string; folder: string }> = {
+  shop: { title: '重構訂單模組', folder: 'shop' },
+  bot: { title: '第 5 批回測', folder: 'bot' },
+  api: { title: '部署上線', folder: 'api' },
+}
 function viewOf(which: Which, t: number, now: number) {
   const api: Row = { folder: 'api', p: other('api', '部署', API_STAGES, apiStepAt(t), false, now, 140_000) }
   const isBotDone = t >= T.botDone
@@ -246,10 +269,10 @@ function viewOf(which: Which, t: number, now: number) {
     const own = { ...plan(stepAt(t), now, t >= T.allDone), ...(v ? { agents: v.shown } : {}) }
     // the plugin lists waiting sessions first, then finished, then running
     const away: Row[] = isBotDone ? [{ folder: 'bot', p: bot }, api] : [api, { folder: 'bot', p: bot }]
-    return { name: 'shop', own, agents: v, away, appear: ramp(t, T.crossIn, T.crossIn + 0.4) }
+    return { own, agents: v, away, appear: ramp(t, T.crossIn, T.crossIn + 0.4) }
   }
   const shop = { ...plan(TOTAL_STEPS, now, true), id: 'shop' }
-  return { name: 'bot', own: bot, agents: null, away: [{ folder: 'shop', p: shop }, api] as Row[], appear: 1 }
+  return { own: bot, agents: null, away: [{ folder: 'shop', p: shop }, api] as Row[], appear: 1 }
 }
 // every bar starts where the longest title ends, as the plugin lines them up
 const barXOf = (v: ReturnType<typeof viewOf>) => 14 + Math.max(textW(v.own.title, 13), ...v.away.map(r => textW(titleOf(r), 13))) + 4
@@ -268,7 +291,7 @@ const growAt = (t: number) => {
   return look.draw(p as never, 301, now, v).height - look.draw(p as never, 301, now, null).height
 }
 const rowHOf = (p: unknown, w: number, look: (typeof STYLES)[StyleKey], now: number) => Math.max(22, look.draw(p as never, w, now, null).height) + 10
-// where the rows and the input sit for a session at time t (UI units from the top of the bar area)
+// the rows inside the band for a session at time t (UI units from the band's inner top)
 function layout(t: number, which: Which) {
   const now = 1_790_000_000_000 + t * 1000
   const v = viewOf(which, t, now)
@@ -278,29 +301,26 @@ function layout(t: number, which: Which) {
   const barW = barWOf(v)
   const rowsH = v.away.reduce((h, r) => h + rowHOf(r.p, barW, look, now), 0)
   const awayY = 42 + grow - c * BAR_ROW
-  const inputY = INPUT.y + grow - c * BAR_ROW + (rowsH + 6) * v.appear
-  return { v, look, grow, c, barX: barXOf(v), barW, awayY, inputY, now }
+  const contentH = 36 + grow - c * BAR_ROW + (ROWS_GAP - 6 + rowsH) * v.appear + 6 * c * v.appear
+  return { v, look, grow, c, barX: barXOf(v), barW, awayY, contentH: Math.max(0, contentH), now }
 }
-// the prompt area sits on the window's bottom edge and grows upward as rows are added, as the app's does
-const blockTop = (t: number) => WIN_BOTTOM - (layout(t, whichAt(t)).inputY + BLOCK_BELOW_INPUT) * UI_S
-const inWindow = (t: number, u: Pt): Pt => {
-  const L = layout(t, whichAt(t))
-  return { x: MAIN_X + MPAD + u.x * UI_S, y: blockTop(t) + (u.y >= INPUT.y ? u.y - INPUT.y + L.inputY : u.y) * UI_S }
-}
+// the band sits on the prompt and grows upward as rows are added, as the app's does
+const bandH = (t: number) => layout(t, whichAt(t)).contentH * UI_S + 2 * BAND_PAD_Y
+const bandTop = (t: number) => INPUT_TOP - 10 * K - bandH(t)
 // the middle of another session's title in the shop session, the press that switches to it
 function awayTitlePt(t: number, folder: string): Pt {
   const L = layout(t, 'shop')
   let y = L.awayY + 6
   for (const r of L.v.away) {
     const h = rowHOf(r.p, L.barW, L.look, L.now)
-    if (r.folder === folder) return { x: MAIN_X + MPAD + (14 + textW(titleOf(r), 13) / 2) * UI_S, y: blockTop(t) + (y + h / 2) * UI_S }
+    if (r.folder === folder) return { x: COL_X + BAND_PAD_X + (14 + textW(titleOf(r), 13) / 2) * UI_S, y: bandTop(t) + BAND_PAD_Y + (y + h / 2) * UI_S }
     y += h
   }
   throw new Error(`no row for ${folder}`)
 }
 
 // ---------- scene pieces ----------
-// one session's bars: its own bar row, then the other sessions' rows under a hairline
+// one session's bars: its own bar row, then the other sessions' rows under a hairline (UI units)
 function sessionBars(t: number, which: Which, hotFolder: string | null): string {
   const L = layout(t, which)
   const { v, look, grow, now } = L
@@ -326,10 +346,10 @@ function sessionBars(t: number, which: Which, hotFolder: string | null): string 
       ? [
           `<g opacity="${rowO}">`,
           glyph ? text(0, 23, glyph.char, 12, { fill: dim ? MUTED : glyph.color }) : '',
-          text(14, 23, p.title, 13, { weight: 500, fill: dim ? MUTED : INK }),
+          text(14, 23, p.title, 13, { fill: dim ? MUTED : INK }),
           `<g transform="translate(${L.barX} 0)" opacity="${1 - leave}">${bar}</g>`,
-          text(IN_W - 22, 23, look.right(p as never, now), 12, { fill: MUTED, anchor: 'end' }),
-          text(IN_W - 6, 23, '✕', 11, { fill: MUTED, anchor: 'middle' }),
+          text(IN_W - 22, 23, look.right(p as never, now), 12.5, { fill: MUTED, anchor: 'end' }),
+          text(IN_W - 6, 23, '✕', 11, { fill: INK2, anchor: 'middle' }),
           `</g>`,
         ].join('')
       : ''
@@ -349,65 +369,143 @@ function sessionBars(t: number, which: Which, hotFolder: string | null): string 
         // the title is the button that switches to that session
         text(14, cy + 4.5, titleOf(r), 13, { fill: isHot ? CLAY : INK, weight: isHot ? 600 : 400 }),
         `<g transform="translate(${L.barX} ${cy - d.height / 2})">${drawnAt(lastOf(t, awayRedraws), `<svg width="${L.barW}" height="${d.height}" overflow="visible">${d.svg}</svg>`)}</g>`,
-        text(IN_W - 22, cy + 4.5, look.right(r.p as never, now), 12, { fill: MUTED, anchor: 'end' }),
-        text(IN_W - 6, cy + 4.5, '✕', 11, { fill: MUTED, anchor: 'middle' }),
+        text(IN_W - 22, cy + 4.5, look.right(r.p as never, now), 12.5, { fill: MUTED, anchor: 'end' }),
+        text(IN_W - 6, cy + 4.5, '✕', 11, { fill: INK2, anchor: 'middle' }),
       ].join('')
     })
     .join('')
-  const away = v.appear > 0 ? `<g opacity="${v.appear}"><rect x="0" y="${L.awayY}" width="${IN_W}" height="1" fill="${LINE}" opacity="${1 - L.c}"/>${rows}</g>` : ''
+  const away = v.appear > 0 ? `<g opacity="${v.appear}"><rect x="0" y="${L.awayY}" width="${IN_W}" height="1" fill="${HAIR}" opacity="${1 - L.c}"/>${rows}</g>` : ''
   return own + away
 }
 
-// what each session's conversation holds at time t
+// what each session's conversation holds at time t: the app shows Claude's answers as plain text across the column;
+// the person's own message is a right-aligned grey bubble (not in the reference screenshot, so its look is assumed)
 const SHOP_ASK = '幫我重構訂單模組'
 const SHOP_FIRST = '好，先讀現有模組，再拆成步驟動手。'
 const BOT_ASK = '跑第 5 批回測'
 const BOT_NEXT_REPLY = '好，開始跑第 6 批。'
+const BODY = 17 * K
 function conversation(t: number, which: Which): string {
-  const x0 = MAIN_X + MPAD
-  const x1 = MAIN_X + MAIN_W - MPAD
-  const y0 = WIN.y + TITLE_H + 120
+  const y0 = WIN.y + TITLE_H + 40
   const bubble = (s: string, y: number, o = 1) => {
-    const w = textW(s, 26) + 40
-    return o > 0 ? `<g opacity="${o}"><rect x="${x1 - w}" y="${y}" width="${w}" height="56" rx="18" fill="${BUBBLE}"/>${text(x1 - w + 20, y + 37, s, 26)}</g>` : ''
+    const w = textW(s, BODY) + 36
+    return o > 0 ? `<g opacity="${o}"><rect x="${COL_R - w}" y="${y}" width="${w}" height="${BODY + 26}" rx="16" fill="${BAND}"/>${text(COL_R - w + 18, y + BODY + 7, s, BODY)}</g>` : ''
   }
-  const said = (s: string, y: number, o = 1) => (o > 0 && s ? `<g opacity="${o}"><circle cx="${x0 + 9}" cy="${y + 28}" r="7" fill="${CLAY}"/>${text(x0 + 28, y + 37, s, 26)}</g>` : '')
-  if (which === 'shop') return bubble(SHOP_ASK, y0) + said(SHOP_FIRST, y0 + 80) + said(replyAt(t), y0 + 140, ramp(t, T.replyFrom, T.replyFrom + 0.15))
+  const said = (s: string, y: number, o = 1) => (o > 0 && s ? `<g opacity="${o}">${text(COL_X, y + BODY, s, BODY)}</g>` : '')
+  if (which === 'shop') return bubble(SHOP_ASK, y0) + said(SHOP_FIRST, y0 + 76) + said(replyAt(t), y0 + 120, ramp(t, T.replyFrom, T.replyFrom + 0.15))
   const sent = ramp(t, T.sendClick, T.sendClick + 0.25)
-  return bubble(BOT_ASK, y0) + said(BOT_REPLY, y0 + 80) + bubble(MESSAGE, y0 + 150, sent) + said(BOT_NEXT_REPLY, y0 + 230, ramp(t, T.sendClick + 0.7, T.sendClick + 0.9))
+  return bubble(BOT_ASK, y0) + said(BOT_REPLY, y0 + 76) + bubble(MESSAGE, y0 + 130, sent) + said(BOT_NEXT_REPLY, y0 + 206, ramp(t, T.sendClick + 0.7, T.sendClick + 0.9))
 }
-// the open session's name above its conversation
+// the open session's name in the title bar: a blue laptop badge, the name, a chevron and the project tag
 function sessionHeader(which: Which): string {
-  const s = SIDEBAR.find(x => x.id === which)!
-  return text(MAIN_X + MPAD, WIN.y + TITLE_H + 50, s.title, 30, { weight: 700 }) + text(MAIN_X + MPAD + textW(s.title, 30) + 14, WIN.y + TITLE_H + 50, s.folder, 22, { fill: MUTED })
-}
-// the left column: one row per session, the open one highlighted; the highlight slides on a switch
-function sidebar(t: number): string {
-  const top = WIN.y + TITLE_H
-  const itemY = (i: number) => top + 66 + i * 82
-  const at = itemY(0) + (itemY(1) - itemY(0)) * easeInOut((t - T.botClick) / T.switchDur)
-  const items = SIDEBAR.map((s, i) => {
-    const y = itemY(i)
-    const isOpen = (i === 0 && t < T.botClick + T.switchDur / 2) || (i === 1 && t >= T.botClick + T.switchDur / 2)
-    return text(WIN.x + 30, y + 32, s.title, 24, { weight: isOpen ? 600 : 400, fill: isOpen ? INK : '#55544F' }) + text(WIN.x + 30, y + 59, s.folder, 19, { fill: MUTED })
-  }).join('')
+  const s = SESSIONS[which]
+  const cy = WIN.y + 33 * K
+  const bx = MAIN_X + 18 * K
+  const nameX = bx + 38 * K
+  const nameEnd = nameX + textW(s.title, 17 * K)
+  const tagX = nameEnd + 40 * K
+  const tagW = textW(s.folder, 15 * K) + 14 * K
   return [
-    `<rect x="${WIN.x}" y="${top}" width="${SIDE_W}" height="${WIN.h - TITLE_H}" fill="${SIDE}"/>`,
-    `<rect x="${WIN.x + SIDE_W - 1}" y="${top}" width="1" height="${WIN.h - TITLE_H}" fill="${LINE}"/>`,
-    text(WIN.x + 30, top + 42, 'Sessions', 19, { weight: 600, fill: MUTED }),
-    `<rect x="${WIN.x + 14}" y="${at}" width="${SIDE_W - 28}" height="74" rx="12" fill="${SIDE_ON}"/>`,
-    items,
+    `<rect x="${bx}" y="${cy - 16 * K}" width="${32 * K}" height="${32 * K}" rx="${8 * K}" fill="${BADGE}"/>`,
+    // a laptop: screen and base
+    `<rect x="${bx + 9 * K}" y="${cy - 7 * K}" width="${14 * K}" height="${10 * K}" rx="${1.5 * K}" fill="none" stroke="${BADGE_INK}" stroke-width="${1.8 * K}"/>`,
+    `<path d="M${bx + 6 * K} ${cy + 6 * K} H${bx + 26 * K}" stroke="${BADGE_INK}" stroke-width="${1.8 * K}" stroke-linecap="round"/>`,
+    text(nameX, cy + 6 * K, s.title, 17 * K, { weight: 500 }),
+    `<path d="M${nameEnd + 12 * K} ${cy - 3 * K} l${5 * K} ${5 * K} l${5 * K} ${-5 * K}" fill="none" stroke="${INK2}" stroke-width="${1.6 * K}" stroke-linecap="round" stroke-linejoin="round"/>`,
+    `<rect x="${tagX}" y="${cy - 13 * K}" width="${tagW}" height="${26 * K}" rx="${6 * K}" fill="${TAG}"/>`,
+    text(tagX + 7 * K, cy + 5 * K, s.folder, 15 * K, { fill: TAG_INK }),
+  ].join('')
+}
+// the title bar: traffic lights and the left icons over the list, the right icons over the main area
+function titleBar(): string {
+  const cy = WIN.y + 33 * K
+  const dots = ['#FF5F57', '#FEBC2E', '#28C840'].map((c, i) => `<circle cx="${WIN.x + 31 * K + i * 29 * K}" cy="${cy}" r="${8 * K}" fill="${c}"/>`).join('')
+  const ic = (x: number, d: string) => `<path transform="translate(${x} ${cy}) scale(${K})" d="${d}" fill="none" stroke="${INK2}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`
+  const lx = WIN.x
+  const seg = `<rect x="${lx + 253 * K}" y="${cy - 17 * K}" width="${94 * K}" height="${34 * K}" rx="${9 * K}" fill="${SEG}"/><rect x="${lx + 302 * K}" y="${cy - 14 * K}" width="${42 * K}" height="${28 * K}" rx="${7 * K}" fill="#FFFFFF"/>`
+  return [
+    dots,
+    ic(lx + 129 * K, 'M-8 -7 h16 v14 h-16 z M-3 -7 v14'), // sidebar
+    ic(lx + 161 * K, 'M-2 -2 m-5 0 a5 5 0 1 0 10 0 a5 5 0 1 0 -10 0 M2 2 l5 5'), // search
+    ic(lx + 194 * K, 'M5 0 h-11 M-1 -5 l-5 5 l5 5'), // back
+    ic(lx + 226 * K, 'M-5 0 h11 M1 -5 l5 5 l-5 5'), // forward
+    seg,
+    ic(lx + 278 * K, 'M-7 -5 h10 v7 h-6 l-4 3 z M3 -1 h4 v7 l-3 -2 h-5'), // chat
+    ic(lx + 323 * K, 'M-3 -5 l-5 5 l5 5 M3 -5 l5 5 l-5 5 M1 -6 l-2 12'), // code
+    ic(WIN.x + WIN.w - 154 * K, 'M-7 -5 l5 5 l-5 5 M0 6 h7'), // terminal
+    ic(WIN.x + WIN.w - 115 * K, 'M-7 -7 h14 v14 h-14 z M-3 0 l3 -3 l3 3 M0 -3 v7'), // panel
+    ic(WIN.x + WIN.w - 74 * K, 'M-7 0 a7 7 0 1 0 14 0 a7 7 0 1 0 -14 0 M-7 0 h14 M0 -7 c-4 4 -4 10 0 14 c4 -4 4 -10 0 -14'), // globe
+    `<g fill="${INK2}">${[-6, 0, 6].map(dy => `<circle cx="${WIN.x + WIN.w - 34 * K}" cy="${cy + dy * K}" r="${1.6 * K}"/>`).join('')}</g>`,
+  ].join('')
+}
+// the left column: the app's own entries, then made-up projects with their sessions; the open one is highlighted
+function sidebar(t: number): string {
+  const x = WIN.x
+  const top = WIN.y + TITLE_H
+  const ix = x + 29 * K // icons
+  const tx = x + 51 * K // text
+  const f = 17 * K
+  const nav = ['新增', '成品', '例行工作', '分派', '自訂', '更多']
+  const navY = (i: number) => WIN.y + (159 - 69) * K + i * 36 * K
+  const navItems = nav
+    .map((s, i) => {
+      const y = navY(i)
+      const icon = i === 0 ? text(ix, y + 6 * K, '+', 18 * K, { fill: INK2, anchor: 'middle' }) : i === 5 ? text(ix, y + 5 * K, '›', 18 * K, { fill: MUTED, anchor: 'middle' }) : `<rect x="${ix - 7 * K}" y="${y - 7 * K}" width="${14 * K}" height="${14 * K}" rx="${3.5 * K}" fill="none" stroke="${INK2}" stroke-width="${1.5 * K}"/>`
+      const beta = i === 3 ? `<rect x="${tx + textW(s, f) + 10 * K}" y="${y - 10 * K}" width="${46 * K}" height="${20 * K}" rx="${4 * K}" fill="${TAG}"/>${text(tx + textW(s, f) + 15 * K, y + 5 * K, '測試版', 12 * K, { fill: TAG_INK })}` : ''
+      return icon + text(tx, y + 6 * K, s, f, { fill: i === 5 ? MUTED : SIDE_INK }) + beta
+    })
+    .join('')
+  // made-up projects, each with one session
+  const groups: { name: string; items: (Which | 'api')[] }[] = [
+    { name: 'shop', items: ['shop'] },
+    { name: 'bot', items: ['bot'] },
+    { name: 'api', items: ['api'] },
+  ]
+  let y = WIN.y + (400 - 69) * K
+  const itemY: Record<string, number> = {}
+  const list = groups
+    .map(g => {
+      const head = text(x + 19 * K, y + 6 * K, g.name, 16 * K, { fill: MUTED }) + text(x + 330 * K, y + 7 * K, '+', 20 * K, { fill: MUTED, anchor: 'middle' })
+      y += 37 * K
+      const rows = g.items
+        .map(id => {
+          itemY[id] = y
+          const r = `<circle cx="${ix}" cy="${y}" r="${3.5 * K}" fill="none" stroke="${MUTED}" stroke-width="${1.2 * K}"/>` + text(tx, y + 6 * K, SESSIONS[id].title, f, { fill: SIDE_INK })
+          y += 37 * K
+          return r
+        })
+        .join('')
+      y += 16 * K
+      return head + rows
+    })
+    .join('')
+  // the highlight slides from shop to bot on the switch
+  const hy = itemY.shop + (itemY.bot - itemY.shop) * easeInOut((t - T.botClick) / T.switchDur)
+  const highlight = `<rect x="${x + 11 * K}" y="${hy - 18 * K}" width="${SIDE_W - 22 * K}" height="${36 * K}" rx="${8 * K}" fill="${SIDE_ON}"/>`
+  // the account at the bottom: a made-up name
+  const by = WIN_B - 29 * K
+  const account = `<rect x="${x}" y="${by - 30 * K}" width="${SIDE_W}" height="1" fill="${HAIR}"/><circle cx="${ix}" cy="${by}" r="${13 * K}" fill="#C76A8E"/>` + text(tx, by + 6 * K, 'demo', f, { fill: SIDE_INK }) + text(tx + textW('demo', f) + 6 * K, by + 6 * K, '· Max', 15 * K, { fill: MUTED })
+  return [
+    `<rect x="${x}" y="${WIN.y}" width="${SIDE_W}" height="${WIN.h}" fill="${SIDE}"/>`,
+    `<rect x="${x + SIDE_W - 1}" y="${top}" width="1" height="${WIN.h - TITLE_H}" fill="${SIDE_LINE}"/>`,
+    navItems,
+    highlight,
+    list,
+    account,
   ].join('')
 }
 
 function appWindow(t: number, gearHot: boolean, hotFolder: string | null): string {
   const which = whichAt(t)
-  const L = layout(t, which)
   // the switch: the shop session slides out, then the bot session slides in, so the two never overlap
   const out = easeInOut((t - T.botClick) / (T.switchDur / 2))
   const inn = easeInOut((t - T.botClick - T.switchDur / 2) / (T.switchDur / 2))
-  const bars = (w: Which, at: number) => `<g transform="translate(${MAIN_X + MPAD} ${blockTop(at)}) scale(${UI_S})">${sessionBars(at, w, w === 'shop' ? hotFolder : null)}</g>`
-  const main = (w: Which, at: number) => sessionHeader(w) + conversation(at, w) + bars(w, at)
+  const band = (w: Which, at: number) => {
+    const h = layout(at, w).contentH * UI_S + 2 * BAND_PAD_Y
+    const top = INPUT_TOP - 10 * K - h
+    return `<rect x="${COL_X}" y="${top}" width="${COL_W}" height="${h}" rx="${12 * K}" fill="${BAND}"/><g transform="translate(${COL_X + BAND_PAD_X} ${top + BAND_PAD_Y}) scale(${UI_S})">${sessionBars(at, w, w === 'shop' ? hotFolder : null)}</g>`
+  }
+  const main = (w: Which, at: number) => sessionHeader(w) + conversation(at, w) + band(w, at)
   const contents =
     which === 'shop'
       ? main('shop', t)
@@ -418,33 +516,35 @@ function appWindow(t: number, gearHot: boolean, hotFolder: string | null): strin
   const typed = typedAt(t)
   const isTyping = t >= T.inputClick && t < T.sendClick
   const caretOn = isTyping && Math.floor((t - T.inputClick) / 0.5) % 2 === 0
-  const caretX = 14 + textW(typed, 13) + 1
-  const gear = `<rect x="${GEAR_U.x - 10}" y="${GEAR_U.y - 10}" width="20" height="20" rx="5" fill="${NATIVE}"/>` + text(GEAR_U.x, GEAR_U.y + 4.5, '⚙︎', 12.5, { fill: gearHot ? CLAY : MUTED, anchor: 'middle' })
-  // the prompt and footer stay put on the bottom edge whichever session is open
+  const ty = INPUT_TOP + INPUT_H / 2 + 6 * K
+  const caretX = COL_X + 17 * K + textW(typed, BODY) + 2
+  const ic = (x: number, y: number, d: string, c = INK2) => `<path transform="translate(${x} ${y}) scale(${K})" d="${d}" fill="none" stroke="${c}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`
+  // the prompt: a white field with a return key, then the footer
   const prompt = [
-    `<rect x="0" y="${INPUT.y}" width="${IN_W}" height="${INPUT.h}" rx="12" fill="${CARD}" stroke="${isTyping ? MUTED : LINE}"/>`,
-    typed ? text(14, 75, typed, 13) : text(14, 75, '請 Claude 幫你…', 13, { fill: MUTED }),
-    caretOn ? `<rect x="${caretX}" y="62" width="1.4" height="17" fill="${INK}"/>` : '',
-    `<circle cx="${SEND.x}" cy="${SEND.y}" r="12" fill="${typed ? INK : LINE}"/>`,
-    `<path d="M${SEND.x} ${SEND.y + 5.5} V${SEND.y - 5} M${SEND.x - 4.5} ${SEND.y - 0.5} L${SEND.x} ${SEND.y - 5} L${SEND.x + 4.5} ${SEND.y - 0.5}" stroke="${CARD}" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`,
-    gear,
-    text(MODEL_END, FOOT_Y, MODEL, 11.5, { fill: MUTED, anchor: 'end' }),
-    text(EFFORT_END, FOOT_Y, EFFORT, 11.5, { fill: MUTED, anchor: 'end' }),
+    `<rect x="${COL_X}" y="${INPUT_TOP}" width="${COL_W}" height="${INPUT_H}" rx="${12 * K}" fill="#FFFFFF" stroke="${isTyping ? '#C9C9C9' : INPUT_LINE}" stroke-width="1.5"/>`,
+    typed ? text(COL_X + 17 * K, ty, typed, BODY) : text(COL_X + 17 * K, ty, '請 Claude 幫你…', BODY, { fill: PLACEHOLDER }),
+    caretOn ? `<rect x="${caretX}" y="${ty - BODY + 1}" width="1.6" height="${BODY + 3}" fill="${INK}"/>` : '',
+    ic(SEND_PT.x, SEND_PT.y, 'M6 -5 v5 h-12 M-3 -3 l-3 3 l3 3', typed ? INK : MUTED),
+    text(COL_X + 23 * K, FOOT_Y, '+', 19 * K, { fill: INK2, anchor: 'middle' }),
+    ic(COL_X + 50 * K, FOOT_Y - 6 * K, 'M0 -6 a2.5 2.5 0 0 1 2.5 2.5 v4 a2.5 2.5 0 0 1 -5 0 v-4 a2.5 2.5 0 0 1 2.5 -2.5 M-5 0 a5 5 0 0 0 10 0 M0 5 v3'),
+    ic(COL_X + 76 * K, FOOT_Y - 6 * K, 'M-3 -1 l3 3 l3 -3'),
+    text(COL_X + 98 * K, FOOT_Y, '略過權限確認', 15 * K, { fill: FOOT_INK }),
+    // the plugin's gear: the desktop draws it as a small grey native button
+    `<rect x="${GEAR_PT.x - 9 * K}" y="${GEAR_PT.y - 9 * K}" width="${18 * K}" height="${18 * K}" rx="${4 * K}" fill="${gearHot ? '#E2DCD6' : NATIVE}"/>`,
+    text(GEAR_PT.x, GEAR_PT.y + 4.5 * K, '⚙︎', 12 * K, { fill: gearHot ? CLAY : '#92928F', anchor: 'middle' }),
+    text(COL_R - 160 * K, FOOT_Y, MODEL, 16 * K, { fill: INK }),
+    text(COL_R - 69 * K, FOOT_Y, '高', 16 * K, { fill: INK }),
   ].join('')
-  const promptTop = blockTop(t) + L.inputY * UI_S
-  const dots = ['#FF5F57', '#FEBC2E', '#28C840'].map((c, i) => `<circle cx="${WIN.x + 26 + i * 22}" cy="${WIN.y + TITLE_H / 2}" r="7" fill="${c}"/>`).join('')
   return [
-    `<rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}" rx="22" fill="${CARD}" stroke="${LINE}" stroke-width="2"/>`,
-    `<clipPath id="win"><rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}" rx="22"/></clipPath>`,
+    `<rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}" rx="${24 * K}" fill="${MAIN_BG}"/>`,
+    `<clipPath id="win"><rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}" rx="${24 * K}"/></clipPath>`,
     `<g clip-path="url(#win)">`,
-    `<rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${TITLE_H}" fill="${SIDE}"/>`,
-    `<rect x="${WIN.x}" y="${WIN.y + TITLE_H - 1}" width="${WIN.w}" height="1" fill="${LINE}"/>`,
-    dots,
-    text(WIN.x + WIN.w / 2, WIN.y + 31, 'Claude', 19, { fill: MUTED, anchor: 'middle', weight: 500 }),
     sidebar(t),
+    titleBar(),
     contents,
-    `<g transform="translate(${MAIN_X + MPAD} ${promptTop - INPUT.y * UI_S}) scale(${UI_S})">${prompt}</g>`,
+    prompt,
     `</g>`,
+    `<rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}" rx="${24 * K}" fill="none" stroke="#00000022" stroke-width="1.5"/>`,
   ].join('')
 }
 
@@ -500,7 +600,7 @@ function paneLayout(style: StyleKey, now: number) {
   return { agentsDrawn, slotH, agentsY, listY, tileH, tileY, useBtn }
 }
 // the pane's bottom edge: just above the bars
-const paneBottom = (t: number) => blockTop(t) - 14
+const paneBottom = (t: number) => bandTop(t) - 14
 // the pane is taller than the room above the bars: it scrolls down to the transit tile, then back up to save and close
 function paneScroll(t: number) {
   const now = 1_790_000_000_000 + t * 1000
@@ -554,9 +654,9 @@ const inPanel = (t: number, u: Pt): Pt => ({ x: P_X + P_PAD + u.x * SP, y: P_TOP
 
 function cursor(t: number): string {
   const now = 1_790_000_000_000 + t * 1000
-  const home = { x: 940, y: 1700 }
+  const home = { x: 940, y: 1760 }
   // where each press lands, read at the moment of the press so the cursor meets the button there
-  const gear = inWindow(T.gearClick, GEAR_U)
+  const gear = GEAR_PT
   const tileAt = (i: number, style: StyleKey, at: number) => {
     const b = paneLayout(style, now).useBtn(i, false)
     return inPanel(at, { x: b.x + btnW('使用') - 4, y: b.y + 13 })
@@ -564,8 +664,8 @@ function cursor(t: number): string {
   const transit = tileAt(4, 'beads', T.transitClick)
   const close = inPanel(T.closeClick, { x: P_W - 14, y: 22 + 12 })
   const bot = awayTitlePt(T.botClick - 0.001, 'bot')
-  const input = inWindow(T.inputClick, { x: 150, y: INPUT.y + 26 })
-  const send = inWindow(T.sendClick, { x: SEND.x + 2, y: SEND.y + 3 })
+  const input = INPUT_PT
+  const send = SEND_PT
   const lerp = (a: Pt, b: Pt, e: number) => ({ x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e })
   const legs: [number[], Pt, Pt][] = [
     [T.gearMove, home, gear],
