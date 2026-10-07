@@ -36,7 +36,6 @@ const W = 1080
 const H = 1920
 const FPS = 60
 const DURATION = 28
-const S = 2 // UI drawn at 2x so it reads on a phone
 
 // ---------- palette and type ----------
 const BG = '#F5F3EE'
@@ -46,6 +45,9 @@ const MUTED = '#86857F'
 const LINE = '#E4E1D8'
 const CLAY = '#C6613F'
 const NATIVE = '#ECEAE4' // the desktop's grey native button
+const SIDE = '#F1EFE9' // the sessions list and the title bar
+const SIDE_ON = '#E3E0D7' // the open session's row in the list
+const BUBBLE = '#ECE9E1' // the person's message
 const FONT = "-apple-system,BlinkMacSystemFont,'PingFang TC','Helvetica Neue',sans-serif"
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c)
@@ -197,28 +199,27 @@ const captionAt = (t: number): [string, number] => {
   if (t < 12.6) return ['六種風格，點一下就換', fade(t, 9.4, 9.7, 12.1, 12.4)]
   if (t < 16.0) return ['回覆寫完，才亮 Done、響完成音', fade(t, 12.8, 13.1, 15.8, 16.0)]
   if (t < 19.0) return ['其他 session 的進度也看得到', fade(t, 16.2, 16.5, 18.8, 19.0)]
-  if (t < 21.5) return ['點標題，直接切過去', fade(t, 19.0, 19.3, 21.2, 21.5)]
+  if (t < 21.5) return ['點進度條標題，切到那個 session', fade(t, 19.0, 19.3, 21.2, 21.5)]
   return ['送出下一則，完成的進度條自動收起', fade(t, 21.6, 21.9, 24.4, 24.7)]
 }
 
 // ---------- layout (px) ----------
-const CARD_X = 60
-const PAD = 16 * S
+// the whole app window: a title bar, the sessions list on the left, the open session on the right
+// (its name, its conversation, then its bars and the prompt at the bottom)
+const WIN = { x: 40, y: 380, w: 1000, h: 1180 }
+const TITLE_H = 48
+const SIDE_W = 260
+const MAIN_X = WIN.x + SIDE_W
+const MAIN_W = WIN.w - SIDE_W
+const MPAD = 24
 const IN_W = 448 // UI units
-const HEAD = 24 // the session's name above its bars
-// the window card sits mid-screen, and slides up while the pane is open so both fit
-const CARD_Y_REST = 660
-const CARD_Y_UP = 200
-const cardY = (t: number) => CARD_Y_REST + (CARD_Y_UP - CARD_Y_REST) * Math.min(easeInOut((t - T.gearClick) / 0.45), 1 - easeInOut((t - T.panelOut) / 0.45))
-const PANEL_GAP = 36
-// the pane is drawn a little smaller than the window card, so its first style tiles fit on screen
-const SP = 1.6
-const P_PAD = 16 * SP
-const P_W = (W - 2 * CARD_X - 2 * P_PAD) / SP // UI units
+const UI_S = (MAIN_W - 2 * MPAD) / IN_W // the prompt area is drawn at this scale
+const WIN_BOTTOM = WIN.y + WIN.h - MPAD
 const BAR_ROW = 48 // the bar's row, gone once the bar has left
-// UI units inside the window card, from the top of the bar area
+// UI units inside the prompt area, from the top of the bar area
 const INPUT = { y: 48, h: 44 }
 const FOOT_Y = 117
+const BLOCK_BELOW_INPUT = 80 // from the input's top to the bottom of the footer
 const MODEL = 'Opus 5.5'
 const EFFORT = 'Medium'
 const SEND = { x: IN_W - 22, y: INPUT.y + 22 }
@@ -226,11 +227,16 @@ const EFFORT_END = IN_W
 const MODEL_END = EFFORT_END - textW(EFFORT, 11.5) - 12
 const GEAR_U = { x: MODEL_END - textW(MODEL, 11.5) - 12 - 10, y: FOOT_Y - 4 }
 
-// ---------- the two sessions on screen: shop (where the clip starts) and bot (where it switches to) ----------
+// ---------- the sessions: shop (where the clip starts), bot (where it switches to), api (running throughout) ----------
 type Which = 'shop' | 'bot'
 type Row = { folder: string; p: ReturnType<typeof other> }
 const titleOf = (r: Row) => `${r.folder} · ${r.p.title}`
 const whichAt = (t: number): Which => (t < T.botClick ? 'shop' : 'bot')
+const SIDEBAR = [
+  { id: 'shop', title: '重構訂單模組', folder: 'shop' },
+  { id: 'bot', title: '回測', folder: 'bot' },
+  { id: 'api', title: '部署', folder: 'api' },
+]
 function viewOf(which: Which, t: number, now: number) {
   const api: Row = { folder: 'api', p: other('api', '部署', API_STAGES, apiStepAt(t), false, now, 140_000) }
   const isBotDone = t >= T.botDone
@@ -275,9 +281,11 @@ function layout(t: number, which: Which) {
   const inputY = INPUT.y + grow - c * BAR_ROW + (rowsH + 6) * v.appear
   return { v, look, grow, c, barX: barXOf(v), barW, awayY, inputY, now }
 }
+// the prompt area sits on the window's bottom edge and grows upward as rows are added, as the app's does
+const blockTop = (t: number) => WIN_BOTTOM - (layout(t, whichAt(t)).inputY + BLOCK_BELOW_INPUT) * UI_S
 const inWindow = (t: number, u: Pt): Pt => {
   const L = layout(t, whichAt(t))
-  return { x: CARD_X + PAD + u.x * S, y: cardY(t) + PAD + (HEAD + (u.y >= INPUT.y ? u.y - INPUT.y + L.inputY : u.y)) * S }
+  return { x: MAIN_X + MPAD + u.x * UI_S, y: blockTop(t) + (u.y >= INPUT.y ? u.y - INPUT.y + L.inputY : u.y) * UI_S }
 }
 // the middle of another session's title in the shop session, the press that switches to it
 function awayTitlePt(t: number, folder: string): Pt {
@@ -285,15 +293,15 @@ function awayTitlePt(t: number, folder: string): Pt {
   let y = L.awayY + 6
   for (const r of L.v.away) {
     const h = rowHOf(r.p, L.barW, L.look, L.now)
-    if (r.folder === folder) return { x: CARD_X + PAD + (14 + textW(titleOf(r), 13) / 2) * S, y: cardY(t) + PAD + (HEAD + y + h / 2) * S }
+    if (r.folder === folder) return { x: MAIN_X + MPAD + (14 + textW(titleOf(r), 13) / 2) * UI_S, y: blockTop(t) + (y + h / 2) * UI_S }
     y += h
   }
   throw new Error(`no row for ${folder}`)
 }
 
 // ---------- scene pieces ----------
-// one session's bars: its own bar row, then the other sessions' rows under a hairline; its name sits above
-function sessionContent(t: number, which: Which, hotFolder: string | null): string {
+// one session's bars: its own bar row, then the other sessions' rows under a hairline
+function sessionBars(t: number, which: Which, hotFolder: string | null): string {
   const L = layout(t, which)
   const { v, look, grow, now } = L
   const p = v.own
@@ -339,7 +347,7 @@ function sessionContent(t: number, which: Which, hotFolder: string | null): stri
       return [
         g ? text(0, cy + 4.5, g.char, 12, { fill: g.color }) : '',
         // the title is the button that switches to that session
-        text(14, cy + 4.5, titleOf(r), 13, { fill: isHot ? CLAY : INK }),
+        text(14, cy + 4.5, titleOf(r), 13, { fill: isHot ? CLAY : INK, weight: isHot ? 600 : 400 }),
         `<g transform="translate(${L.barX} ${cy - d.height / 2})">${drawnAt(lastOf(t, awayRedraws), `<svg width="${L.barW}" height="${d.height}" overflow="visible">${d.svg}</svg>`)}</g>`,
         text(IN_W - 22, cy + 4.5, look.right(r.p as never, now), 12, { fill: MUTED, anchor: 'end' }),
         text(IN_W - 6, cy + 4.5, '✕', 11, { fill: MUTED, anchor: 'middle' }),
@@ -347,32 +355,73 @@ function sessionContent(t: number, which: Which, hotFolder: string | null): stri
     })
     .join('')
   const away = v.appear > 0 ? `<g opacity="${v.appear}"><rect x="0" y="${L.awayY}" width="${IN_W}" height="1" fill="${LINE}" opacity="${1 - L.c}"/>${rows}</g>` : ''
-  const name = `<circle cx="4" cy="${-HEAD + 9}" r="3.5" fill="${CLAY}"/>` + text(13, -HEAD + 13, v.name, 11.5, { weight: 600, fill: MUTED })
-  return name + own + away
+  return own + away
 }
 
-function windowCard(t: number, gearHot: boolean, hotFolder: string | null): string {
+// what each session's conversation holds at time t
+const SHOP_ASK = '幫我重構訂單模組'
+const SHOP_FIRST = '好，先讀現有模組，再拆成步驟動手。'
+const BOT_ASK = '跑第 5 批回測'
+const BOT_NEXT_REPLY = '好，開始跑第 6 批。'
+function conversation(t: number, which: Which): string {
+  const x0 = MAIN_X + MPAD
+  const x1 = MAIN_X + MAIN_W - MPAD
+  const y0 = WIN.y + TITLE_H + 120
+  const bubble = (s: string, y: number, o = 1) => {
+    const w = textW(s, 26) + 40
+    return o > 0 ? `<g opacity="${o}"><rect x="${x1 - w}" y="${y}" width="${w}" height="56" rx="18" fill="${BUBBLE}"/>${text(x1 - w + 20, y + 37, s, 26)}</g>` : ''
+  }
+  const said = (s: string, y: number, o = 1) => (o > 0 && s ? `<g opacity="${o}"><circle cx="${x0 + 9}" cy="${y + 28}" r="7" fill="${CLAY}"/>${text(x0 + 28, y + 37, s, 26)}</g>` : '')
+  if (which === 'shop') return bubble(SHOP_ASK, y0) + said(SHOP_FIRST, y0 + 80) + said(replyAt(t), y0 + 140, ramp(t, T.replyFrom, T.replyFrom + 0.15))
+  const sent = ramp(t, T.sendClick, T.sendClick + 0.25)
+  return bubble(BOT_ASK, y0) + said(BOT_REPLY, y0 + 80) + bubble(MESSAGE, y0 + 150, sent) + said(BOT_NEXT_REPLY, y0 + 230, ramp(t, T.sendClick + 0.7, T.sendClick + 0.9))
+}
+// the open session's name above its conversation
+function sessionHeader(which: Which): string {
+  const s = SIDEBAR.find(x => x.id === which)!
+  return text(MAIN_X + MPAD, WIN.y + TITLE_H + 50, s.title, 30, { weight: 700 }) + text(MAIN_X + MPAD + textW(s.title, 30) + 14, WIN.y + TITLE_H + 50, s.folder, 22, { fill: MUTED })
+}
+// the left column: one row per session, the open one highlighted; the highlight slides on a switch
+function sidebar(t: number): string {
+  const top = WIN.y + TITLE_H
+  const itemY = (i: number) => top + 66 + i * 82
+  const at = itemY(0) + (itemY(1) - itemY(0)) * easeInOut((t - T.botClick) / T.switchDur)
+  const items = SIDEBAR.map((s, i) => {
+    const y = itemY(i)
+    const isOpen = (i === 0 && t < T.botClick + T.switchDur / 2) || (i === 1 && t >= T.botClick + T.switchDur / 2)
+    return text(WIN.x + 30, y + 32, s.title, 24, { weight: isOpen ? 600 : 400, fill: isOpen ? INK : '#55544F' }) + text(WIN.x + 30, y + 59, s.folder, 19, { fill: MUTED })
+  }).join('')
+  return [
+    `<rect x="${WIN.x}" y="${top}" width="${SIDE_W}" height="${WIN.h - TITLE_H}" fill="${SIDE}"/>`,
+    `<rect x="${WIN.x + SIDE_W - 1}" y="${top}" width="1" height="${WIN.h - TITLE_H}" fill="${LINE}"/>`,
+    text(WIN.x + 30, top + 42, 'Sessions', 19, { weight: 600, fill: MUTED }),
+    `<rect x="${WIN.x + 14}" y="${at}" width="${SIDE_W - 28}" height="74" rx="12" fill="${SIDE_ON}"/>`,
+    items,
+  ].join('')
+}
+
+function appWindow(t: number, gearHot: boolean, hotFolder: string | null): string {
   const which = whichAt(t)
   const L = layout(t, which)
   // the switch: the shop session slides out, then the bot session slides in, so the two never overlap
   const out = easeInOut((t - T.botClick) / (T.switchDur / 2))
   const inn = easeInOut((t - T.botClick - T.switchDur / 2) / (T.switchDur / 2))
+  const bars = (w: Which, at: number) => `<g transform="translate(${MAIN_X + MPAD} ${blockTop(at)}) scale(${UI_S})">${sessionBars(at, w, w === 'shop' ? hotFolder : null)}</g>`
+  const main = (w: Which, at: number) => sessionHeader(w) + conversation(at, w) + bars(w, at)
   const contents =
     which === 'shop'
-      ? sessionContent(t, 'shop', hotFolder)
+      ? main('shop', t)
       : [
-          out < 1 ? `<g opacity="${1 - out}" transform="translate(${-24 * out} 0)">${sessionContent(T.botClick - 0.001, 'shop', 'bot')}</g>` : '',
-          inn > 0 ? `<g opacity="${inn}" transform="translate(${24 * (1 - inn)} 0)">${sessionContent(t, 'bot', null)}</g>` : '',
+          out < 1 ? `<g opacity="${1 - out}" transform="translate(${-30 * out} 0)">${main('shop', T.botClick - 0.001)}</g>` : '',
+          inn > 0 ? `<g opacity="${inn}" transform="translate(${30 * (1 - inn)} 0)">${main('bot', t)}</g>` : '',
         ].join('')
   const typed = typedAt(t)
   const isTyping = t >= T.inputClick && t < T.sendClick
   const caretOn = isTyping && Math.floor((t - T.inputClick) / 0.5) % 2 === 0
   const caretX = 14 + textW(typed, 13) + 1
-  const dy = L.inputY - INPUT.y
   const gear = `<rect x="${GEAR_U.x - 10}" y="${GEAR_U.y - 10}" width="20" height="20" rx="5" fill="${NATIVE}"/>` + text(GEAR_U.x, GEAR_U.y + 4.5, '⚙︎', 12.5, { fill: gearHot ? CLAY : MUTED, anchor: 'middle' })
-  const ui = [
-    contents,
-    `<g transform="translate(0 ${dy})">`,
+  // the prompt and footer stay put on the bottom edge whichever session is open
+  const prompt = [
     `<rect x="0" y="${INPUT.y}" width="${IN_W}" height="${INPUT.h}" rx="12" fill="${CARD}" stroke="${isTyping ? MUTED : LINE}"/>`,
     typed ? text(14, 75, typed, 13) : text(14, 75, '請 Claude 幫你…', 13, { fill: MUTED }),
     caretOn ? `<rect x="${caretX}" y="62" width="1.4" height="17" fill="${INK}"/>` : '',
@@ -381,19 +430,22 @@ function windowCard(t: number, gearHot: boolean, hotFolder: string | null): stri
     gear,
     text(MODEL_END, FOOT_Y, MODEL, 11.5, { fill: MUTED, anchor: 'end' }),
     text(EFFORT_END, FOOT_Y, EFFORT, 11.5, { fill: MUTED, anchor: 'end' }),
+  ].join('')
+  const promptTop = blockTop(t) + L.inputY * UI_S
+  const dots = ['#FF5F57', '#FEBC2E', '#28C840'].map((c, i) => `<circle cx="${WIN.x + 26 + i * 22}" cy="${WIN.y + TITLE_H / 2}" r="7" fill="${c}"/>`).join('')
+  return [
+    `<rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}" rx="22" fill="${CARD}" stroke="${LINE}" stroke-width="2"/>`,
+    `<clipPath id="win"><rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}" rx="22"/></clipPath>`,
+    `<g clip-path="url(#win)">`,
+    `<rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${TITLE_H}" fill="${SIDE}"/>`,
+    `<rect x="${WIN.x}" y="${WIN.y + TITLE_H - 1}" width="${WIN.w}" height="1" fill="${LINE}"/>`,
+    dots,
+    text(WIN.x + WIN.w / 2, WIN.y + 31, 'Claude', 19, { fill: MUTED, anchor: 'middle', weight: 500 }),
+    sidebar(t),
+    contents,
+    `<g transform="translate(${MAIN_X + MPAD} ${promptTop - INPUT.y * UI_S}) scale(${UI_S})">${prompt}</g>`,
     `</g>`,
   ].join('')
-  const y = cardY(t)
-  return `<rect x="${CARD_X}" y="${y}" width="${W - 2 * CARD_X}" height="${(HEAD + 150 + dy) * S}" rx="28" fill="${CARD}" stroke="${LINE}" stroke-width="2"/>
-<g transform="translate(${CARD_X + PAD} ${y + PAD + HEAD * S}) scale(${S})">${ui}</g>`
-}
-// the reply above the card, as the transcript sits above the prompt: shop's streams in, bot's is already there
-function transcript(t: number): string {
-  const out = easeInOut((t - T.botClick) / (T.switchDur / 2))
-  const inn = easeInOut((t - T.botClick - T.switchDur / 2) / (T.switchDur / 2))
-  const y = cardY(t) - 40
-  const line = (s: string, o: number) => (o > 0 && s ? `<g opacity="${o}"><circle cx="${CARD_X + 12}" cy="${y - 10}" r="7" fill="${CLAY}"/>${text(CARD_X + 32, y, s, 30)}</g>` : '')
-  return line(replyAt(t), ramp(t, T.replyFrom, T.replyFrom + 0.15) * (1 - out)) + line(BOT_REPLY, inn)
 }
 
 // a native-looking pane button, black and white as the desktop draws them; the current choice is filled black
@@ -418,7 +470,8 @@ const buttonRow = (x: number, y: number, labels: string[], on: number) => {
 }
 
 // the pane as the plugin lays it out: the two on/off settings with save and close at the top right,
-// the other sessions switch, the subagent view with its preview, then one bordered tile per style
+// the other sessions switch, the subagent view with its preview, then one bordered tile per style.
+// It opens over the conversation, so the bars under it stay in sight while a style is picked.
 const PANE_STYLES: [StyleKey | 'original', string][] = [
   ['segments', '分段'],
   ['hairline', '細線'],
@@ -427,6 +480,11 @@ const PANE_STYLES: [StyleKey | 'original', string][] = [
   ['transit', '路線圖'],
   ['original', '原版'],
 ]
+const P_X = MAIN_X + 12
+const P_TOP = WIN.y + TITLE_H + 12
+const P_PAD = 18
+const P_W = 470 // UI units
+const SP = (MAIN_W - 24 - 2 * P_PAD) / P_W
 const TILE_W = P_W - 24
 const CROSS_Y = 77 // the other sessions switch
 const AGENTS_LABEL_Y = 132
@@ -440,6 +498,16 @@ function paneLayout(style: StyleKey, now: number) {
   const tileY = (i: number) => listY + 12 + i * (tileH + 8)
   const useBtn = (i: number, isCurrent: boolean) => ({ x: P_W - 10 - btnW(isCurrent ? '✓ 使用中' : '使用'), y: tileY(i) + 10 })
   return { agentsDrawn, slotH, agentsY, listY, tileH, tileY, useBtn }
+}
+// the pane's bottom edge: just above the bars
+const paneBottom = (t: number) => blockTop(t) - 14
+// the pane is taller than the room above the bars: it scrolls down to the transit tile, then back up to save and close
+function paneScroll(t: number) {
+  const now = 1_790_000_000_000 + t * 1000
+  const L = paneLayout('beads', now)
+  const room = (paneBottom(t) - P_TOP - 2 * P_PAD) / SP
+  const need = Math.max(0, L.tileY(4) + L.tileH + 10 - room)
+  return need * (ramp(t, T.panelIn + 0.4, T.transitMove[0]) - ramp(t, T.transitClick + 0.3, T.closeMove[0]))
 }
 
 function panelCard(t: number, style: StyleKey): string {
@@ -476,18 +544,17 @@ function panelCard(t: number, style: StyleKey): string {
     text(0, L.listY + 4, '進度條樣式', 13, { weight: 600 }),
     ...tiles,
   ].join('')
-  const y = panelTop(t)
-  // the pane runs past the bottom of the frame, as a long pane scrolls
-  return `<rect x="${CARD_X}" y="${y}" width="${W - 2 * CARD_X}" height="${H}" rx="28" fill="${CARD}" stroke="${LINE}" stroke-width="2"/>
-<g transform="translate(${CARD_X + P_PAD} ${y + P_PAD}) scale(${SP})">${ui}</g>`
+  const h = paneBottom(t) - P_TOP
+  // a long pane scrolls: what does not fit under the bars' edge is cut off
+  return `<clipPath id="pane"><rect x="${P_X}" y="${P_TOP}" width="${MAIN_W - 24}" height="${h}" rx="18"/></clipPath>
+<rect x="${P_X}" y="${P_TOP}" width="${MAIN_W - 24}" height="${h}" rx="18" fill="${CARD}" stroke="${INK}" stroke-opacity=".18" stroke-width="2"/>
+<g clip-path="url(#pane)"><g transform="translate(${P_X + P_PAD} ${P_TOP + P_PAD - paneScroll(t) * SP}) scale(${SP})">${ui}</g></g>`
 }
-// the pane opens under the card, whose height is the bar row, the input and the footer while the pane is open
-const panelTop = (t: number) => cardY(t) + (HEAD + 150 + layout(t, 'shop').inputY - INPUT.y) * S + PANEL_GAP
-const inPanel = (t: number, u: Pt): Pt => ({ x: CARD_X + P_PAD + u.x * SP, y: panelTop(t) + P_PAD + u.y * SP })
+const inPanel = (t: number, u: Pt): Pt => ({ x: P_X + P_PAD + u.x * SP, y: P_TOP + P_PAD + (u.y - paneScroll(t)) * SP })
 
 function cursor(t: number): string {
   const now = 1_790_000_000_000 + t * 1000
-  const home = { x: 940, y: 1560 }
+  const home = { x: 940, y: 1700 }
   // where each press lands, read at the moment of the press so the cursor meets the button there
   const gear = inWindow(T.gearClick, GEAR_U)
   const tileAt = (i: number, style: StyleKey, at: number) => {
@@ -542,8 +609,9 @@ function frame(t: number): string {
       `</g>`,
     )
   if (uiO > 0) {
-    parts.push(`<g opacity="${uiO}">`, text(W / 2, cardY(t) - 120, caption, 50, { weight: 700, anchor: 'middle', opacity: capO }), transcript(t), windowCard(t, gearHot, hotFolder), `</g>`)
-    if (panelO > 0) parts.push(`<g opacity="${panelO * uiO}" transform="translate(0 ${panelDy})">`, panelCard(t, style), `</g>`)
+    parts.push(`<g opacity="${uiO}">`, text(W / 2, WIN.y - 70, caption, 50, { weight: 700, anchor: 'middle', opacity: capO }), appWindow(t, gearHot, hotFolder))
+    if (panelO > 0) parts.push(`<g opacity="${panelO}" transform="translate(0 ${panelDy})">`, panelCard(t, style), `</g>`)
+    parts.push(`</g>`)
   }
   parts.push(cursor(t))
   if (endO > 0)
