@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRun, Plan, PlanStage, PlanState, PlanStep, StepStatus } from '../types'
+import type { AgentRun, OtherSession, OthersView, Plan, PlanStage, PlanState, PlanStep, StepStatus } from '../types'
 import { DEFAULT_STYLE, STYLE_IDS, STYLE_INFO, STYLES, isStyleId } from './styles'
 import type { StyleId } from './styles'
 
@@ -664,6 +664,107 @@ async function dropLeft($: EngineInterface) {
 const fadeOut = (svg: string, W: number, H: number) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><style>@keyframes pp-leave{to{opacity:0}}.pp-leave{animation:pp-leave ${LEAVE_MS}ms ease-out forwards}</style><g class="pp-leave">${svg}</g></svg>`
 
+// ---------- other sessions: each desktop session writes its status to a shared folder, every session reads the others ----------
+type SessionStatus = 'working' | 'done' | 'needs_input' | 'idle' | 'ended'
+type SessionFile = { v: 1; hostId: string; cwd: string; label: string; state: SessionStatus; since: number; updatedAt: number }
+const others = atom({ plugin: 'plan-progress', key: 'others' } as const, { rows: [], running: 0 } as OthersView)
+const crossOn = atom({ plugin: 'plan-progress', key: 'crossSessions' } as const, true)
+const CROSS_STORE_KEY = 'crossSessions'
+const setCross = async ($: EngineInterface, isOn: boolean) => {
+  await update($, crossOn, () => isOn)
+  await $.store.set(CROSS_STORE_KEY, isOn)
+}
+// the desktop's own session id; the link is built from it, never read from a file, since `open` acts on whatever it is given
+const HOST_ID = /^local_[0-9a-f-]{36}$/
+const linkOf = (hostId: string) => `claude://claude.ai/epitaxy/${hostId}`
+const SEEN = 'seen.json'
+const HEARTBEAT_MS = 30_000 // a working session rewrites its file this often
+const WORKING_FRESH_MS = 90_000 // a working file older than this belongs to a session that is gone
+const KEEP_MS = 24 * 3600_000 // a finished session older than this no longer shows
+const MAX_OTHERS = 3
+const POLL_EVERY = 2 // seconds between reads of the shared folder
+let sessionsDir: string | null = null
+let mine: { hostId: string; cwd: string; state: SessionStatus; since: number; lastPrompt: string } | null = null
+let lastBeat = 0
+let lastOthers = ''
+let pollCount = 0
+
+// writes this session's status; a new state restarts `since`, so a second finish shows again after the first was seen
+async function publish($: EngineInterface, state?: SessionStatus) {
+  if (!mine || !sessionsDir) return
+  const now = await $.clock.now()
+  if (state) {
+    mine.state = state
+    mine.since = now
+  }
+  lastBeat = now
+  const bar = [...(await read($, plans))].reverse().find(p => p.id !== AGENTS)
+  const file: SessionFile = { v: 1, hostId: mine.hostId, cwd: mine.cwd, label: bar?.title || mine.lastPrompt, state: mine.state, since: mine.since, updatedAt: now }
+  await $.fs.write(`${sessionsDir}/${mine.hostId}.json`, JSON.stringify(file)).catch(() => undefined)
+}
+
+async function readSeen($: EngineInterface): Promise<Record<string, number>> {
+  if (!sessionsDir) return {}
+  try {
+    const v = JSON.parse((await $.fs.read(`${sessionsDir}/${SEEN}`)) as string)
+    return v && typeof v === 'object' ? v : {}
+  } catch {
+    return {}
+  }
+}
+
+async function pollOthers($: EngineInterface) {
+  if (!sessionsDir) return
+  const now = await $.clock.now()
+  const entries = await $.fs.list(sessionsDir).catch(() => [])
+  const seen = await readSeen($)
+  const rows: OtherSession[] = []
+  let running = 0
+  for (const entry of entries) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.json') || entry.name === SEEN || now - entry.mtimeMs > KEEP_MS) continue
+    let f: SessionFile
+    try {
+      f = JSON.parse((await $.fs.read(`${sessionsDir}/${entry.name}`)) as string)
+    } catch {
+      continue
+    }
+    if (f?.v !== 1 || !HOST_ID.test(f.hostId) || f.hostId === mine?.hostId) continue
+    if (f.state === 'working') {
+      if (now - f.updatedAt < WORKING_FRESH_MS) running += 1
+      continue
+    }
+    if ((f.state === 'done' || f.state === 'needs_input') && f.since > (seen[f.hostId] ?? 0) && now - f.since < KEEP_MS) {
+      rows.push({ hostId: f.hostId, folder: str(String(f.cwd).split('/').pop(), 40), label: str(f.label, 60), state: f.state, since: f.since })
+    }
+  }
+  // waiting on the person first, then the newest finish
+  rows.sort((a, b) => (a.state === b.state ? b.since - a.since : a.state === 'needs_input' ? -1 : 1))
+  const view = { rows, running }
+  const key = JSON.stringify(view)
+  if (key === lastOthers) return
+  lastOthers = key
+  await update($, others, () => view)
+}
+
+// the person has seen this finish: every session stops showing it until that session finishes again
+async function markSeen($: EngineInterface, row: OtherSession) {
+  if (sessionsDir) {
+    const now = await $.clock.now()
+    const seen = await readSeen($)
+    seen[row.hostId] = row.since
+    for (const [id, at] of Object.entries(seen)) if (now - at > KEEP_MS) delete seen[id]
+    await $.fs.write(`${sessionsDir}/${SEEN}`, JSON.stringify(seen)).catch(() => undefined)
+  }
+  lastOthers = ''
+  await update($, others, v => ({ ...v, rows: v.rows.filter(r => r.hostId !== row.hostId) }))
+}
+
+async function switchTo($: EngineInterface, row: OtherSession) {
+  if (!HOST_ID.test(row.hostId)) return
+  await markSeen($, row)
+  await $.process.run(['open', linkOf(row.hostId)], { timeoutMs: 5000 }).catch(() => undefined)
+}
+
 const STEP_SCHEMA = {
   type: 'object',
   required: ['title', 'status'],
@@ -699,6 +800,8 @@ export const register: Register = on => {
     isWaitingOnBackground = false
     isMainTurn = true
     owesDone = false
+    if (mine) mine.lastPrompt = str(e.text, 30)
+    await publish($, 'working')
 
     return next(e)
   })
@@ -818,7 +921,17 @@ export const register: Register = on => {
     if (typeof savedShown === 'boolean') await update($, isOpen, () => savedShown)
     const savedSounds = await $.store.get(SOUNDS_STORE_KEY)
     if (typeof savedSounds === 'boolean') await update($, soundsOn, () => savedSounds)
+    const savedCross = await $.store.get(CROSS_STORE_KEY)
+    if (typeof savedCross === 'boolean') await update($, crossOn, () => savedCross)
+    // a desktop session names itself in its environment; a terminal session has no id to switch to and only reads
+    const home = await $.env.get('HOME')
+    const hostId = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID')
+    if (home) sessionsDir = `${home}/.claude/plan-progress/sessions`
+    if (hostId && HOST_ID.test(hostId)) mine = { hostId, cwd: await $.session.cwd(), state: 'idle', since: await $.clock.now(), lastPrompt: '' }
     $.clock.every(1000, async () => {
+      if (mine?.state === 'working' && (await $.clock.now()) - lastBeat >= HEARTBEAT_MS) await publish($)
+      pollCount += 1
+      if (pollCount % POLL_EVERY === 0 && (await read($, crossOn))) await pollOthers($)
       // the hairline style shows elapsed time, so it redraws every second while a bar runs
       const isTiming = (await styleOf($)) === 'hairline' && (await read($, plans)).some(p => p.state !== 'done')
       if (isTiming || agentHome.size > 0 || (await $.clock.now()) < foldUntil) await update($, tick, n => n + 1)
@@ -862,8 +975,10 @@ export const register: Register = on => {
     const live = (await read($, plans)).filter(p => p.state === 'running' && !p.isFinishing).pop()
     if (live) await update($, plans, list => list.map(p => (p.id === live.id ? { ...p, state: 'needs_input' as const } : p)))
     play($, 'decision')
+    await publish($, 'needs_input')
     const ran = await next(e)
     if (live) await update($, plans, list => list.map(p => (p.id === live.id && p.state === 'needs_input' ? { ...p, state: 'running' as const } : p)))
+    await publish($, 'working')
 
     return ran
   })
@@ -955,6 +1070,7 @@ export const register: Register = on => {
     const view = await agentViewOf($)
     const isShown = await read($, isOpen)
     const isSounding = await read($, soundsOn)
+    const isCross = await read($, crossOn)
     const now = await $.clock.now()
     const W = Math.max(200, Math.min(460, (e.props.bodyColumns || 50) * 8 - 24))
     // a tile's border and padding take about three columns
@@ -1009,6 +1125,20 @@ export const register: Register = on => {
         </Box>
 
         <Box flexDirection="column" gap={1}>
+          <Text bold>其他 session</Text>
+          <Box key="cross-row" flexDirection="row" alignItems="center" gap={1}>
+            {([true, false] as const).map(isOn => (
+              <Button
+                key={isOn ? 'cross-on' : 'cross-off'}
+                variant={isOn === isCross ? 'primary' : 'secondary'}
+                label={isOn ? '開' : '關'}
+                onPress={() => (isOn === isCross ? undefined : setCross($, isOn))}
+              />
+            ))}
+          </Box>
+        </Box>
+
+        <Box flexDirection="column" gap={1}>
           <Text bold>Subagent 顯示</Text>
           <Box key="agents-row" flexDirection="row" alignItems="center" gap={1}>
             {AGENT_VIEWS.map(k => (
@@ -1057,7 +1187,10 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const list = await read($, plans)
-    if (list.length === 0 || e.props.hasSurvey || !(await read($, isOpen))) return next(e)
+    // other sessions that finished or wait on the person, under this session's own bars
+    const away: OthersView = (await read($, crossOn)) ? await read($, others) : { rows: [], running: 0 }
+    const hasAway = away.rows.length > 0 || away.running > 0
+    if ((list.length === 0 && !hasAway) || e.props.hasSurvey || !(await read($, isOpen))) return next(e)
     const t = $.ui.resolve(e)
     const { Box, Button, Text } = t
     const Svg = 'Svg' in t ? t.Svg : null
@@ -1065,7 +1198,7 @@ export const register: Register = on => {
     // every bar has the same width and is pinned to the right edge (fixed-width percent, close button),
     // so rows line up whatever their titles; the slack goes into the gap after the title.
     // Desktop reports ~8 CSS px per column; glyph, gaps, percent and the close button take ~126 px.
-    const titleWidth = Math.min(Math.round(total * 0.3), Math.max(...list.map(p => Math.round(textWidth(p.title, 6.4)))))
+    const titleWidth = Math.min(Math.round(total * 0.3), Math.max(0, ...list.map(p => Math.round(textWidth(p.title, 6.4)))))
     const style = await styleOf($)
     const look = style === 'original' ? null : STYLES[style]
     const view = await agentViewOf($)
@@ -1116,6 +1249,28 @@ export const register: Register = on => {
             </Box>,
           ]
         })}
+        {[
+          ...(list.length > 0 && hasAway && Svg ? [<Svg key="div-away" source={divider} alt="" width={total} height={1} />] : []),
+          ...away.rows.slice(0, MAX_OTHERS).map(r => (
+            <Box key={`away-${r.hostId}`} flexDirection="row" alignItems="center" gap={1}>
+              <Text color={STATE_COLOR[r.state]}>{STATE_GLYPH[r.state]}</Text>
+              <Text wrap="truncate">{r.label ? `${r.folder} · ${r.label}` : r.folder}</Text>
+              <Text dimColor>{r.state === 'done' ? '跑完了' : '等你決定'}</Text>
+              <Box flexGrow={1} />
+              <Button key={`switch-${r.hostId}`} label="切換" onPress={() => switchTo($, r)} />
+              <Button key={`seen-${r.hostId}`} plain dimColor label="✕" onPress={() => markSeen($, r)} />
+            </Box>
+          )),
+          ...(away.rows.length > MAX_OTHERS || away.running > 0
+            ? [
+                <Text key="away-more" dimColor>
+                  {[away.rows.length > MAX_OTHERS ? `還有 ${away.rows.length - MAX_OTHERS} 個 session 跑完或等你決定` : '', away.running > 0 ? `另有 ${away.running} 個 session 在跑` : '']
+                    .filter(Boolean)
+                    .join('　')}
+                </Text>,
+              ]
+            : []),
+        ]}
       </Box>
     )
   })
@@ -1163,6 +1318,13 @@ export const register: Register = on => {
     return verdict
   })
 
+  // a closed session leaves the other sessions' lists
+  on('session.end', async ($, e, next) => {
+    await publish($, 'ended')
+
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
     const agentId = e.agentId
     if (agentId && agentHome.has(agentId)) {
@@ -1189,6 +1351,9 @@ export const register: Register = on => {
         owesDone = false
         play($, 'done')
       }
+      // what the other sessions show: a reply ending in a question waits on the person; an interrupted turn shows nothing
+      const isAsking = /[?？]\s*$/.test(e.answer ?? '')
+      await publish($, e.reason !== 'answer' ? 'idle' : isAsking ? 'needs_input' : 'done')
     }
 
     return next(e)

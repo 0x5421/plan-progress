@@ -345,3 +345,148 @@ test('subagents finishing mid-turn sound done once, when the main turn ends', as
   await $.turn.complete(END as never)
   expect(host.played).toEqual(['sounds/done.wav'])
 })
+
+// ---------- other sessions ----------
+const NOW = 1_790_000_000_000
+const ME = 'local_00000000-0000-4000-8000-000000000000'
+const sid = (n: number) => `local_00000000-0000-4000-8000-00000000000${n}`
+const DIR = '/home/me/.claude/plan-progress/sessions'
+
+// the shared folder in memory, the environment a desktop session sees, and the commands the plugin runs
+function hostFs(on: any, env: Record<string, string | undefined> = { HOME: '/home/me', CLAUDE_CODE_HOST_SESSION_ID: ME }) {
+  const files = new Map<string, { text: string; mtimeMs: number }>()
+  const ran: string[][] = []
+  on('env.get', (_$: unknown, e: { name: string }) => ({ value: env[e.name] }))
+  on('fs.write', (_$: unknown, e: { path: string; text: string }) => {
+    files.set(e.path, { text: e.text, mtimeMs: NOW })
+    return { value: undefined }
+  })
+  on('fs.read', (_$: unknown, e: { path: string }) => {
+    const f = files.get(e.path)
+    if (!f) throw new Error('missing')
+    return { value: f.text }
+  })
+  on('fs.list', (_$: unknown, e: { path: string }) => ({
+    value: [...files.entries()]
+      .filter(([p]) => p.startsWith(`${e.path}/`))
+      .map(([p, f]) => ({ name: p.slice(e.path.length + 1), kind: 'file', size: f.text.length, mtimeMs: f.mtimeMs, isLink: false })),
+  }))
+  on('process.run', (_$: unknown, e: { argv: string[] }) => {
+    ran.push([...e.argv])
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+  on('session.cwd', () => ({ value: '/work/memelab' }))
+  on('session.start', () => ({ cwd: '/work/memelab' }))
+  on('tool.register', () => ({ value: undefined }))
+  on('command.register', () => ({ value: undefined }))
+  const put = (hostId: string, state: string, since: number, extra: Record<string, unknown> = {}) =>
+    files.set(`${DIR}/${hostId}.json`, {
+      text: JSON.stringify({ v: 1, hostId, cwd: `/work/${hostId.slice(-1)}-proj`, label: `task ${hostId.slice(-1)}`, state, since, updatedAt: since, ...extra }),
+      mtimeMs: since,
+    })
+  const mine = () => JSON.parse(files.get(`${DIR}/${ME}.json`)?.text ?? 'null')
+  return { files, ran, put, mine }
+}
+const start = ($: any) => $.session.start({ cwd: '/work/memelab', surface: 'desktop', isInteractive: true })
+const awayRows = async ($: any) => {
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  const tree = JSON.stringify(await above.drawn())
+  const rows = [1, 2, 3, 4, 5, 6, 7, 8].map(sid).filter(id => tree.includes(`away-${id}`))
+  return { above, tree, rows }
+}
+
+test('a desktop session writes its status for the others: working, done, waiting, ended', async ($, on) => {
+  engine(on)
+  turns(on)
+  on('session.end', () => ({ sessionId: 's1' }))
+  const fs = hostFs(on)
+  await start($)
+  await $.turn.start({ text: '幫我修跟單參數', turnId: 't1' })
+  expect(fs.mine()).toMatchObject({ v: 1, hostId: ME, cwd: '/work/memelab', state: 'working', label: '幫我修跟單參數' })
+  await $.tool.call({ tool: TOOL, id: 'fix', title: '修跟單參數', stages: STAGES } as never)
+  await $.turn.complete({ ...END, answer: '改好了。' } as never)
+  expect(fs.mine()).toMatchObject({ state: 'done', label: '修跟單參數' })
+  await $.turn.start({ text: 'next', turnId: 't2' })
+  await $.turn.complete({ ...END, answer: '要部署嗎？', turnId: 't2' } as never)
+  expect(fs.mine().state).toBe('needs_input')
+  await $.turn.start({ text: 'stop', turnId: 't3' })
+  await $.turn.complete({ ...END, reason: 'aborted', isAborted: true, turnId: 't3' } as never)
+  expect(fs.mine().state).toBe('idle')
+  await $.session.end({ reason: 'other' } as never)
+  expect(fs.mine().state).toBe('ended')
+})
+
+test('a terminal session has no id to switch to, so it writes nothing', async ($, on) => {
+  engine(on)
+  turns(on)
+  const fs = hostFs(on, { HOME: '/home/me' })
+  await start($)
+  await $.turn.start({ text: 'x', turnId: 't1' })
+  await $.turn.complete(END as never)
+  expect(fs.files.size).toBe(0)
+})
+
+test('other sessions that finished or wait show under the bars; a press switches to one, ✕ hides one', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  fs.put(sid(1), 'done', NOW - 60_000)
+  fs.put(sid(2), 'needs_input', NOW - 120_000)
+  fs.put(sid(3), 'working', NOW - 10_000)
+  fs.put(sid(4), 'working', NOW - 10 * 60_000) // a working file nobody refreshed: that session is gone
+  fs.put(sid(5), 'done', NOW - 30_000)
+  fs.put(sid(6), 'done', NOW - 25 * 3600_000) // older than a day
+  fs.put(sid(7), 'ended', NOW - 5_000)
+  fs.put(ME, 'done', NOW - 5_000) // this session itself
+  fs.put('evil-session', 'done', NOW - 5_000) // a file whose id is not a desktop session id
+  fs.files.set(`${DIR}/seen.json`, { text: JSON.stringify({ [sid(5)]: NOW - 30_000 }), mtimeMs: NOW })
+  await start($)
+  await clock.advance(2000)
+  const { above, tree, rows } = await awayRows($)
+  // waiting on the person first, then the newest finish; seen, stale, ended, own and malformed ones left out
+  expect(rows).toEqual([sid(1), sid(2)])
+  expect(tree.indexOf(`away-${sid(2)}`)).toBeLessThan(tree.indexOf(`away-${sid(1)}`))
+  expect(tree).toContain('1-proj · task 1')
+  expect(tree).toContain('跑完了')
+  expect(tree).toContain('等你決定')
+  expect(tree).toContain('另有 1 個 session 在跑')
+  expect(tree).not.toContain('evil')
+  expect(tree).not.toContain(`away-${ME}`)
+  await above.press({ key: `switch-${sid(1)}` })
+  expect(fs.ran).toEqual([['open', `claude://claude.ai/epitaxy/${sid(1)}`]])
+  expect(JSON.parse(fs.files.get(`${DIR}/seen.json`)?.text ?? '{}')[sid(1)]).toBe(NOW - 60_000)
+  await above.unmount()
+  expect((await awayRows($)).rows).toEqual([sid(2)])
+  const again = await awayRows($)
+  await again.above.press({ key: `seen-${sid(2)}` })
+  await again.above.unmount()
+  expect((await awayRows($)).rows).toEqual([])
+  // ✕ only hides: nothing opens
+  expect(fs.ran.length).toBe(1)
+  // the seen mark holds on the next read of the folder too
+  await clock.advance(2000)
+  expect((await awayRows($)).rows).toEqual([])
+  // a session that finishes again shows again
+  fs.put(sid(1), 'done', NOW + 1_000)
+  await clock.advance(2000)
+  expect((await awayRows($)).rows).toEqual([sid(1)])
+})
+
+test('the pane turns other sessions off and on, saved, on by default', async ($, on) => {
+  const host = engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  fs.put(sid(1), 'done', NOW - 60_000)
+  await start($)
+  await clock.advance(2000)
+  expect((await awayRows($)).rows).toEqual([sid(1)])
+  const pane = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'Pane', requestId: PANE, props: PANE_PROPS as never })
+  expect((await pane.find({ key: 'cross-on' }))?.props.variant).toBe('primary')
+  await pane.press({ key: 'cross-off' })
+  expect(host.store.get('crossSessions')).toBe(false)
+  expect((await awayRows($)).rows).toEqual([])
+  await pane.press({ key: 'cross-on' })
+  expect(host.store.get('crossSessions')).toBe(true)
+  await clock.advance(2000)
+  expect((await awayRows($)).rows).toEqual([sid(1)])
+})
