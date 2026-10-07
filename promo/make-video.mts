@@ -2,7 +2,7 @@
 // captures each frame in headless Chrome over the DevTools protocol, then joins them with ffmpeg.
 // Run: node --experimental-strip-types promo/make-video.mts [outDir] [--stills=6.8,9.6,15.5]
 // --stills writes only those moments as PNGs into outDir/stills, to check a layout without the full render.
-// --audio-only writes just the soundtrack (outDir/soundtrack.wav), to listen to it without the full render.
+// --audio-only writes just the soundtrack (outDir/soundtrack.wav): the clicks and the plugin's done sound, no music.
 import { spawn, execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { stripTypeScriptTypes } from 'node:module'
@@ -35,7 +35,7 @@ const FRAMES = STILLS ? `${OUT_DIR}/stills` : `${OUT_DIR}/frames`
 const W = 1080
 const H = 1920
 const FPS = 60
-const DURATION = 21.5
+const DURATION = 28
 const S = 2 // UI drawn at 2x so it reads on a phone
 
 // ---------- palette and type ----------
@@ -60,7 +60,7 @@ const text = (x: number, y: number, s: string, size: number, o: { fill?: string;
 const textW = (s: string, size: number) => [...s].reduce((w, ch) => w + (/[　-鿿＀-￯]/.test(ch) ? size : size * 0.56), 0)
 type Pt = { x: number; y: number }
 
-// ---------- the demo plan ----------
+// ---------- the demo plans ----------
 const STAGES: [string, string[]][] = [
   ['Analysis', ['讀現有模組', '找相依關係', '列出改動']],
   ['Build', ['資料表結構', '寫遷移', '搬資料', '建索引']],
@@ -68,24 +68,40 @@ const STAGES: [string, string[]][] = [
   ['Ship', ['打包', '發佈']],
 ]
 const TOTAL_STEPS = STAGES.reduce((n, [, s]) => n + s.length, 0)
-function plan(k: number, now: number) {
+function stagesOf(stages: [string, string[]][], k: number) {
   let i = 0
-  return {
-    id: 'promo',
-    title: '重構訂單模組',
-    kind: 'plan' as const,
-    state: (k >= TOTAL_STEPS ? 'done' : 'running') as 'done' | 'running',
-    note: null,
-    startedAt: now - 192_000,
-    stages: STAGES.map(([name, steps]) => ({
-      name,
-      steps: steps.map(title => {
-        const idx = i++
-        return { title, substeps: [], status: (idx < k ? 'done' : idx === k ? 'active' : 'pending') as 'done' | 'active' | 'pending' }
-      }),
-    })),
-  }
+  return stages.map(([name, steps]) => ({
+    name,
+    steps: steps.map(title => {
+      const idx = i++
+      return { title, substeps: [], status: (idx < k ? 'done' : idx === k ? 'active' : 'pending') as 'done' | 'active' | 'pending' }
+    }),
+  }))
 }
+// a bar whose steps are all ticked stays running until the turn ends: the plugin turns it done once the reply is written
+function plan(k: number, now: number, isDone = k >= TOTAL_STEPS) {
+  return { id: 'promo', title: '重構訂單模組', kind: 'plan' as const, state: (isDone ? 'done' : 'running') as 'done' | 'running', note: null, startedAt: now - 192_000, stages: stagesOf(STAGES, k) }
+}
+// two other sessions running beside this one
+const API_STAGES: [string, string[]][] = [
+  ['Build', ['打包', '推映像']],
+  ['Deploy', ['換版', '健康檢查']],
+  ['Watch', ['看日誌', '收尾']],
+]
+const BOT_STAGES: [string, string[]][] = [
+  ['Data', ['抓資料', '清資料']],
+  ['Run', ['跑回測', '算績效']],
+  ['Report', ['寫報告']],
+]
+const other = (id: string, title: string, stages: [string, string[]][], k: number, isDone: boolean, now: number, ago: number) => ({
+  id,
+  title,
+  kind: 'plan' as const,
+  state: (isDone ? 'done' : 'running') as 'done' | 'running',
+  note: null,
+  startedAt: now - ago,
+  stages: stagesOf(stages, k),
+})
 // the pane's subagent preview, the same three sample runs the plugin shows
 function sampleAgents(now: number) {
   return [
@@ -124,17 +140,25 @@ const T = {
   closeClick: 12.3,
   panelOut: 12.4,
   stepTen: 13.0,
-  allDone: 13.6,
-  inputMove: [14.1, 14.7],
-  inputClick: 14.8,
-  typeFrom: 14.9,
-  sendMove: [16.1, 16.5],
-  sendClick: 16.6,
+  stepLast: 13.5, // every step ticked: the bar holds at 100% while Claude writes its reply
+  replyFrom: 13.7,
+  replyTo: 15.0,
+  allDone: 15.3, // the reply is written: the bar turns done and the done sound plays
+  crossIn: 16.2, // the other sessions' bars show under this one
+  botDone: 17.8, // another session finishes; this session plays nothing for it
+  botMove: [19.2, 19.9],
+  botClick: 20.0, // its title is pressed: the app switches to that session
+  switchDur: 0.4,
+  inputMove: [21.0, 21.6],
+  inputClick: 21.7,
+  typeFrom: 21.8,
+  sendMove: [22.9, 23.3],
+  sendClick: 23.4,
   leave: 0.8, // the bar's fade, slower than the plugin's 0.4 s so it reads on video
   collapse: 0.3,
-  cursorOut: [17.8, 18.1],
-  uiOut: 18.6,
-  endIn: 18.9,
+  cursorOut: [24.6, 24.9],
+  uiOut: 25.4,
+  endIn: 25.7,
 }
 // three subagents start under the bar, one stops for approval, all finish, then their strips fold away;
 // each run lists [time, state, tool] changes from its start
@@ -156,38 +180,43 @@ function agentsAt(t: number, now: number) {
   })
   return shown.length ? { shown, hidden: [] } : null
 }
-const MESSAGE = '接著幫我寫測試'
+const MESSAGE = '接著跑第 6 批'
 const CHAR_S = 0.14
 const STEP_S = 1.1
-const stepAt = (t: number) => (t >= T.allDone ? TOTAL_STEPS : t >= T.stepTen ? 9 : Math.min(8, 3 + Math.floor(Math.max(0, t - 2.2) / STEP_S)))
+const REPLY = '重構完成：四個階段都跑完，測試全數通過。'
+const BOT_REPLY = '回測跑完了，報告放在 report.md。'
+const stepAt = (t: number) => (t >= T.stepLast ? TOTAL_STEPS : t >= T.stepTen ? 9 : Math.min(8, 3 + Math.floor(Math.max(0, t - 2.2) / STEP_S)))
 const styleAt = (t: number): StyleKey => (t < T.transitClick ? 'beads' : 'transit')
 const typedAt = (t: number) => (t >= T.sendClick ? '' : MESSAGE.slice(0, clamp(Math.floor((t - T.typeFrom) / CHAR_S) + 1, 0, MESSAGE.length)))
+const replyAt = (t: number) => REPLY.slice(0, Math.round(REPLY.length * clamp((t - T.replyFrom) / (T.replyTo - T.replyFrom))))
+const apiStepAt = (t: number) => clamp(2 + Math.floor(Math.max(0, t - T.crossIn) / 2.6), 2, 5)
 const captionAt = (t: number): [string, number] => {
   if (t < 4.3) return ['Claude 做事時，進度一目了然', fade(t, 2.0, 2.4, 4.1, 4.3)]
   if (t < 7.8) return ['Subagent 跑到哪也看得到', fade(t, 4.3, 4.6, 7.6, 7.8)]
   if (t < 9.4) return ['點 ⚙ 打開設定面板', fade(t, 7.8, 8.1, 9.2, 9.4)]
-  // the closing beat (the bar leaving after the next message) runs without a caption
-  return ['六種風格，點一下就換', fade(t, 9.4, 9.7, 12.1, 12.4)]
+  if (t < 12.6) return ['六種風格，點一下就換', fade(t, 9.4, 9.7, 12.1, 12.4)]
+  if (t < 16.0) return ['回覆寫完，才亮 Done、響完成音', fade(t, 12.8, 13.1, 15.8, 16.0)]
+  if (t < 19.0) return ['其他 session 的進度也看得到', fade(t, 16.2, 16.5, 18.8, 19.0)]
+  if (t < 21.5) return ['點標題，直接切過去', fade(t, 19.0, 19.3, 21.2, 21.5)]
+  return ['送出下一則，完成的進度條自動收起', fade(t, 21.6, 21.9, 24.4, 24.7)]
 }
 
 // ---------- layout (px) ----------
 const CARD_X = 60
 const PAD = 16 * S
 const IN_W = 448 // UI units
+const HEAD = 24 // the session's name above its bars
 // the window card sits mid-screen, and slides up while the pane is open so both fit
-const CARD_Y_REST = 700
-const CARD_Y_UP = 250
+const CARD_Y_REST = 660
+const CARD_Y_UP = 200
 const cardY = (t: number) => CARD_Y_REST + (CARD_Y_UP - CARD_Y_REST) * Math.min(easeInOut((t - T.gearClick) / 0.45), 1 - easeInOut((t - T.panelOut) / 0.45))
 const PANEL_GAP = 36
-// the pane is drawn a little smaller than the window card, so five of its six style tiles fit on screen
+// the pane is drawn a little smaller than the window card, so its first style tiles fit on screen
 const SP = 1.6
 const P_PAD = 16 * SP
 const P_W = (W - 2 * CARD_X - 2 * P_PAD) / SP // UI units
 const BAR_ROW = 48 // the bar's row, gone once the bar has left
-const BAR_X = 96
-// past 300 the strips under the bar also name each subagent's current tool
-const BAR_W = 301
-// UI units inside the window card, from its top-left inner corner
+// UI units inside the window card, from the top of the bar area
 const INPUT = { y: 48, h: 44 }
 const FOOT_Y = 117
 const MODEL = 'Opus 5.5'
@@ -197,7 +226,30 @@ const EFFORT_END = IN_W
 const MODEL_END = EFFORT_END - textW(EFFORT, 11.5) - 12
 const GEAR_U = { x: MODEL_END - textW(MODEL, 11.5) - 12 - 10, y: FOOT_Y - 4 }
 
-// how far the bar row has collapsed (0 = full, 1 = gone)
+// ---------- the two sessions on screen: shop (where the clip starts) and bot (where it switches to) ----------
+type Which = 'shop' | 'bot'
+type Row = { folder: string; p: ReturnType<typeof other> }
+const titleOf = (r: Row) => `${r.folder} · ${r.p.title}`
+const whichAt = (t: number): Which => (t < T.botClick ? 'shop' : 'bot')
+function viewOf(which: Which, t: number, now: number) {
+  const api: Row = { folder: 'api', p: other('api', '部署', API_STAGES, apiStepAt(t), false, now, 140_000) }
+  const isBotDone = t >= T.botDone
+  const bot = other('bot', '回測', BOT_STAGES, isBotDone ? 5 : 4, isBotDone, now, 410_000)
+  if (which === 'shop') {
+    const v = agentsAt(t, now)
+    const own = { ...plan(stepAt(t), now, t >= T.allDone), ...(v ? { agents: v.shown } : {}) }
+    // the plugin lists waiting sessions first, then finished, then running
+    const away: Row[] = isBotDone ? [{ folder: 'bot', p: bot }, api] : [api, { folder: 'bot', p: bot }]
+    return { name: 'shop', own, agents: v, away, appear: ramp(t, T.crossIn, T.crossIn + 0.4) }
+  }
+  const shop = { ...plan(TOTAL_STEPS, now, true), id: 'shop' }
+  return { name: 'bot', own: bot, agents: null, away: [{ folder: 'shop', p: shop }, api] as Row[], appear: 1 }
+}
+// every bar starts where the longest title ends, as the plugin lines them up
+const barXOf = (v: ReturnType<typeof viewOf>) => 14 + Math.max(textW(v.own.title, 13), ...v.away.map(r => textW(titleOf(r), 13))) + 4
+const barWOf = (v: ReturnType<typeof viewOf>) => IN_W - barXOf(v) - 51
+
+// how far the bar row has collapsed (0 = full, 1 = gone); only the bot session's bar leaves, after the message is sent
 const collapsedAt = (t: number) => easeInOut((t - T.sendClick - T.leave) / T.collapse)
 const leavingAt = (t: number) => clamp((t - T.sendClick) / T.leave)
 // how much taller the bar's row is while subagent strips show under it
@@ -207,52 +259,120 @@ const growAt = (t: number) => {
   if (!v) return 0
   const p = { ...plan(stepAt(t), now), agents: v.shown }
   const look = STYLES[styleAt(t)]
-  return look.draw(p as never, BAR_W, now, v).height - look.draw(p as never, BAR_W, now, null).height
+  return look.draw(p as never, 301, now, v).height - look.draw(p as never, 301, now, null).height
 }
-const inWindow = (t: number, u: Pt): Pt => ({ x: CARD_X + PAD + u.x * S, y: cardY(t) + PAD + (u.y + (u.y >= INPUT.y ? growAt(t) - collapsedAt(t) * BAR_ROW : 0)) * S })
+const rowHOf = (p: unknown, w: number, look: (typeof STYLES)[StyleKey], now: number) => Math.max(22, look.draw(p as never, w, now, null).height) + 10
+// where the rows and the input sit for a session at time t (UI units from the top of the bar area)
+function layout(t: number, which: Which) {
+  const now = 1_790_000_000_000 + t * 1000
+  const v = viewOf(which, t, now)
+  const look = STYLES[styleAt(t)]
+  const grow = which === 'shop' ? growAt(t) : 0
+  const c = which === 'bot' ? collapsedAt(t) : 0
+  const barW = barWOf(v)
+  const rowsH = v.away.reduce((h, r) => h + rowHOf(r.p, barW, look, now), 0)
+  const awayY = 42 + grow - c * BAR_ROW
+  const inputY = INPUT.y + grow - c * BAR_ROW + (rowsH + 6) * v.appear
+  return { v, look, grow, c, barX: barXOf(v), barW, awayY, inputY, now }
+}
+const inWindow = (t: number, u: Pt): Pt => {
+  const L = layout(t, whichAt(t))
+  return { x: CARD_X + PAD + u.x * S, y: cardY(t) + PAD + (HEAD + (u.y >= INPUT.y ? u.y - INPUT.y + L.inputY : u.y)) * S }
+}
+// the middle of another session's title in the shop session, the press that switches to it
+function awayTitlePt(t: number, folder: string): Pt {
+  const L = layout(t, 'shop')
+  let y = L.awayY + 6
+  for (const r of L.v.away) {
+    const h = rowHOf(r.p, L.barW, L.look, L.now)
+    if (r.folder === folder) return { x: CARD_X + PAD + (14 + textW(titleOf(r), 13) / 2) * S, y: cardY(t) + PAD + (HEAD + y + h / 2) * S }
+    y += h
+  }
+  throw new Error(`no row for ${folder}`)
+}
 
 // ---------- scene pieces ----------
-function windowCard(t: number, style: StyleKey, gearHot: boolean): string {
-  const now = 1_790_000_000_000 + t * 1000
-  const v = agentsAt(t, now)
-  const p = { ...plan(stepAt(t), now), ...(v ? { agents: v.shown } : {}) }
-  const look = STYLES[style]
-  const grow = growAt(t)
-  const shift = collapsedAt(t) * BAR_ROW - grow
-  const leave = leavingAt(t)
-  const rowO = 1 - ramp(t, T.sendClick + T.leave - 0.1, T.sendClick + T.leave + 0.05)
+// one session's bars: its own bar row, then the other sessions' rows under a hairline; its name sits above
+function sessionContent(t: number, which: Which, hotFolder: string | null): string {
+  const L = layout(t, which)
+  const { v, look, grow, now } = L
+  const p = v.own
+  const drawnOwn = look.draw(p as never, L.barW, now, v.agents)
+  const plainH = look.draw(p as never, L.barW, now, null).height
+  const leave = which === 'bot' ? leavingAt(t) : 0
+  const rowO = which === 'bot' ? 1 - ramp(t, T.sendClick + T.leave - 0.1, T.sendClick + T.leave + 0.05) : 1
   // the bar redraws when a step moves, when its style changes, on each subagent change,
   // and every second while subagents run (the plugin's clock ticks for their elapsed times)
   const stepMoves = [1, 2, 3, 4, 5].map(k => 2.2 + STEP_S * k)
   const agentTicks = Array.from({ length: Math.ceil(T.agentsFold - RUNS[0].at) }, (_, i) => RUNS[0].at + i + 1)
-  const redraws = [T.uiIn, ...stepMoves, ...AGENT_EVENTS, ...agentTicks.filter(x => x < T.agentsFold), T.agentsFold, T.transitClick, T.stepTen, T.allDone]
-  // with strips the drawing grows downward from where the plain bar sits
-  const plainH = look.draw(p as never, BAR_W, now, null).height
-  const drawn = look.draw(p as never, BAR_W, now, v)
-  const bar = drawnAt(lastOf(t, redraws), `<svg width="${BAR_W}" height="${36 + grow}" overflow="visible"><g transform="translate(0 ${(36 - plainH) / 2})">${drawn.svg}</g></svg>`)
+  const ownRedraws =
+    which === 'shop'
+      ? [T.uiIn, ...stepMoves, ...AGENT_EVENTS, ...agentTicks.filter(x => x < T.agentsFold), T.agentsFold, T.transitClick, T.stepTen, T.stepLast, T.allDone]
+      : [T.botClick]
+  const bar = drawnAt(lastOf(t, ownRedraws), `<svg width="${L.barW}" height="${36 + grow}" overflow="visible"><g transform="translate(0 ${(36 - plainH) / 2})">${drawnOwn.svg}</g></svg>`)
   const glyph = look.glyph(p as never)
-  const typed = typedAt(t)
-  const isTyping = t >= T.inputClick && t < T.sendClick
-  const caretOn = isTyping && Math.floor((t - T.inputClick) / 0.5) % 2 === 0
-  const caretX = 14 + textW(typed, 13) + 1
   // a leaving bar's drawing fades; its title, glyph and count dim, as the plugin does
   const dim = leave > 0
-  const barRow =
+  const own =
     rowO > 0
       ? [
           `<g opacity="${rowO}">`,
           glyph ? text(0, 23, glyph.char, 12, { fill: dim ? MUTED : glyph.color }) : '',
           text(14, 23, p.title, 13, { weight: 500, fill: dim ? MUTED : INK }),
-          `<g transform="translate(${BAR_X} 0)" opacity="${1 - leave}">${bar}</g>`,
+          `<g transform="translate(${L.barX} 0)" opacity="${1 - leave}">${bar}</g>`,
           text(IN_W - 22, 23, look.right(p as never, now), 12, { fill: MUTED, anchor: 'end' }),
           text(IN_W - 6, 23, '✕', 11, { fill: MUTED, anchor: 'middle' }),
           `</g>`,
         ].join('')
       : ''
+  // the other sessions' rows redraw when they appear, when one moves a step, when one finishes, and after a switch
+  const awayRedraws = [T.crossIn, T.botDone, T.botClick, ...[1, 2, 3].map(i => T.crossIn + 2.6 * i)]
+  let y = L.awayY + 6
+  const rows = v.away
+    .map(r => {
+      const h = rowHOf(r.p, L.barW, look, now)
+      const d = look.draw(r.p as never, L.barW, now, null)
+      const cy = y + h / 2
+      y += h
+      const g = look.glyph(r.p as never)
+      const isHot = hotFolder === r.folder
+      return [
+        g ? text(0, cy + 4.5, g.char, 12, { fill: g.color }) : '',
+        // the title is the button that switches to that session
+        text(14, cy + 4.5, titleOf(r), 13, { fill: isHot ? CLAY : INK }),
+        `<g transform="translate(${L.barX} ${cy - d.height / 2})">${drawnAt(lastOf(t, awayRedraws), `<svg width="${L.barW}" height="${d.height}" overflow="visible">${d.svg}</svg>`)}</g>`,
+        text(IN_W - 22, cy + 4.5, look.right(r.p as never, now), 12, { fill: MUTED, anchor: 'end' }),
+        text(IN_W - 6, cy + 4.5, '✕', 11, { fill: MUTED, anchor: 'middle' }),
+      ].join('')
+    })
+    .join('')
+  const away = v.appear > 0 ? `<g opacity="${v.appear}"><rect x="0" y="${L.awayY}" width="${IN_W}" height="1" fill="${LINE}" opacity="${1 - L.c}"/>${rows}</g>` : ''
+  const name = `<circle cx="4" cy="${-HEAD + 9}" r="3.5" fill="${CLAY}"/>` + text(13, -HEAD + 13, v.name, 11.5, { weight: 600, fill: MUTED })
+  return name + own + away
+}
+
+function windowCard(t: number, gearHot: boolean, hotFolder: string | null): string {
+  const which = whichAt(t)
+  const L = layout(t, which)
+  // the switch: the shop session slides out, then the bot session slides in, so the two never overlap
+  const out = easeInOut((t - T.botClick) / (T.switchDur / 2))
+  const inn = easeInOut((t - T.botClick - T.switchDur / 2) / (T.switchDur / 2))
+  const contents =
+    which === 'shop'
+      ? sessionContent(t, 'shop', hotFolder)
+      : [
+          out < 1 ? `<g opacity="${1 - out}" transform="translate(${-24 * out} 0)">${sessionContent(T.botClick - 0.001, 'shop', 'bot')}</g>` : '',
+          inn > 0 ? `<g opacity="${inn}" transform="translate(${24 * (1 - inn)} 0)">${sessionContent(t, 'bot', null)}</g>` : '',
+        ].join('')
+  const typed = typedAt(t)
+  const isTyping = t >= T.inputClick && t < T.sendClick
+  const caretOn = isTyping && Math.floor((t - T.inputClick) / 0.5) % 2 === 0
+  const caretX = 14 + textW(typed, 13) + 1
+  const dy = L.inputY - INPUT.y
   const gear = `<rect x="${GEAR_U.x - 10}" y="${GEAR_U.y - 10}" width="20" height="20" rx="5" fill="${NATIVE}"/>` + text(GEAR_U.x, GEAR_U.y + 4.5, '⚙︎', 12.5, { fill: gearHot ? CLAY : MUTED, anchor: 'middle' })
   const ui = [
-    barRow,
-    `<g transform="translate(0 ${-shift})">`,
+    contents,
+    `<g transform="translate(0 ${dy})">`,
     `<rect x="0" y="${INPUT.y}" width="${IN_W}" height="${INPUT.h}" rx="12" fill="${CARD}" stroke="${isTyping ? MUTED : LINE}"/>`,
     typed ? text(14, 75, typed, 13) : text(14, 75, '請 Claude 幫你…', 13, { fill: MUTED }),
     caretOn ? `<rect x="${caretX}" y="62" width="1.4" height="17" fill="${INK}"/>` : '',
@@ -264,8 +384,16 @@ function windowCard(t: number, style: StyleKey, gearHot: boolean): string {
     `</g>`,
   ].join('')
   const y = cardY(t)
-  return `<rect x="${CARD_X}" y="${y}" width="${W - 2 * CARD_X}" height="${(150 - shift) * S}" rx="28" fill="${CARD}" stroke="${LINE}" stroke-width="2"/>
-<g transform="translate(${CARD_X + PAD} ${y + PAD}) scale(${S})">${ui}</g>`
+  return `<rect x="${CARD_X}" y="${y}" width="${W - 2 * CARD_X}" height="${(HEAD + 150 + dy) * S}" rx="28" fill="${CARD}" stroke="${LINE}" stroke-width="2"/>
+<g transform="translate(${CARD_X + PAD} ${y + PAD + HEAD * S}) scale(${S})">${ui}</g>`
+}
+// the reply above the card, as the transcript sits above the prompt: shop's streams in, bot's is already there
+function transcript(t: number): string {
+  const out = easeInOut((t - T.botClick) / (T.switchDur / 2))
+  const inn = easeInOut((t - T.botClick - T.switchDur / 2) / (T.switchDur / 2))
+  const y = cardY(t) - 40
+  const line = (s: string, o: number) => (o > 0 && s ? `<g opacity="${o}"><circle cx="${CARD_X + 12}" cy="${y - 10}" r="7" fill="${CLAY}"/>${text(CARD_X + 32, y, s, 30)}</g>` : '')
+  return line(replyAt(t), ramp(t, T.replyFrom, T.replyFrom + 0.15) * (1 - out)) + line(BOT_REPLY, inn)
 }
 
 // a native-looking pane button, black and white as the desktop draws them; the current choice is filled black
@@ -290,7 +418,7 @@ const buttonRow = (x: number, y: number, labels: string[], on: number) => {
 }
 
 // the pane as the plugin lays it out: the two on/off settings with save and close at the top right,
-// the subagent view with its preview, then one bordered tile per style
+// the other sessions switch, the subagent view with its preview, then one bordered tile per style
 const PANE_STYLES: [StyleKey | 'original', string][] = [
   ['segments', '分段'],
   ['hairline', '細線'],
@@ -300,11 +428,13 @@ const PANE_STYLES: [StyleKey | 'original', string][] = [
   ['original', '原版'],
 ]
 const TILE_W = P_W - 24
+const CROSS_Y = 77 // the other sessions switch
+const AGENTS_LABEL_Y = 132
 function paneLayout(style: StyleKey, now: number) {
   const agentsDrawn = STYLES[style].draw({ ...plan(5, now), id: 'preview-agents', agents: sampleAgents(now) } as never, P_W, now, { shown: sampleAgents(now), hidden: [] })
   const previews = PANE_STYLES.filter((e): e is [StyleKey, string] => e[0] !== 'original').map(([id]) => STYLES[id].draw({ ...plan(5, now), id: `preview-${id}` } as never, TILE_W, now, null))
   const slotH = Math.max(...previews.map(d => d.height))
-  const agentsY = 104
+  const agentsY = AGENTS_LABEL_Y + 27
   const listY = agentsY + agentsDrawn.height + 22
   const tileH = 10 + BTN_H + 8 + slotH + 10
   const tileY = (i: number) => listY + 12 + i * (tileH + 8)
@@ -338,18 +468,22 @@ function panelCard(t: number, style: StyleKey): string {
     text(130, 13, '提示音', 13, { weight: 600 }),
     buttonRow(130, 22, ['開', '關'], 0),
     button(closeX, 22, '儲存並關閉', true),
-    text(0, 77, 'Subagent 顯示', 13, { weight: 600 }),
-    buttonRow(0, 86 - 4, ['展開', '摘要', '隱藏'], 0),
+    text(0, CROSS_Y, '其他 session', 13, { weight: 600 }),
+    buttonRow(0, CROSS_Y + 5, ['開', '關'], 0),
+    text(0, AGENTS_LABEL_Y, 'Subagent 顯示', 13, { weight: 600 }),
+    buttonRow(0, AGENTS_LABEL_Y + 5, ['展開', '摘要', '隱藏'], 0),
     `<g transform="translate(0 ${L.agentsY + 8})">${drawnAt(paneDrawn, L.agentsDrawn.svg)}</g>`,
     text(0, L.listY + 4, '進度條樣式', 13, { weight: 600 }),
     ...tiles,
   ].join('')
-  const y = cardY(t) + 150 * S + PANEL_GAP
+  const y = panelTop(t)
   // the pane runs past the bottom of the frame, as a long pane scrolls
   return `<rect x="${CARD_X}" y="${y}" width="${W - 2 * CARD_X}" height="${H}" rx="28" fill="${CARD}" stroke="${LINE}" stroke-width="2"/>
 <g transform="translate(${CARD_X + P_PAD} ${y + P_PAD}) scale(${SP})">${ui}</g>`
 }
-const inPanel = (t: number, u: Pt): Pt => ({ x: CARD_X + P_PAD + u.x * SP, y: cardY(t) + 150 * S + PANEL_GAP + P_PAD + u.y * SP })
+// the pane opens under the card, whose height is the bar row, the input and the footer while the pane is open
+const panelTop = (t: number) => cardY(t) + (HEAD + 150 + layout(t, 'shop').inputY - INPUT.y) * S + PANEL_GAP
+const inPanel = (t: number, u: Pt): Pt => ({ x: CARD_X + P_PAD + u.x * SP, y: panelTop(t) + P_PAD + u.y * SP })
 
 function cursor(t: number): string {
   const now = 1_790_000_000_000 + t * 1000
@@ -362,6 +496,7 @@ function cursor(t: number): string {
   }
   const transit = tileAt(4, 'beads', T.transitClick)
   const close = inPanel(T.closeClick, { x: P_W - 14, y: 22 + 12 })
+  const bot = awayTitlePt(T.botClick - 0.001, 'bot')
   const input = inWindow(T.inputClick, { x: 150, y: INPUT.y + 26 })
   const send = inWindow(T.sendClick, { x: SEND.x + 2, y: SEND.y + 3 })
   const lerp = (a: Pt, b: Pt, e: number) => ({ x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e })
@@ -369,24 +504,23 @@ function cursor(t: number): string {
     [T.gearMove, home, gear],
     [T.transitMove, gear, transit],
     [T.closeMove, transit, close],
-    [T.inputMove, close, input],
+    [T.botMove, close, bot],
+    [T.inputMove, bot, input],
     [T.sendMove, input, send],
   ]
   let at = home
   for (const [[a, b], from, to] of legs) if (t >= a) at = lerp(from, to, ramp(t, a, b))
   const opacity = fade(t, T.gearMove[0] - 0.2, T.gearMove[0], T.cursorOut[0], T.cursorOut[1])
   if (opacity <= 0) return ''
-  const clicks = [T.gearClick, T.transitClick, T.closeClick, T.inputClick, T.sendClick]
-  const ring = clicks
-    .map(c => {
-      const k = (t - c) / 0.4
-      if (k < 0 || k > 1) return ''
-      return `<circle cx="${at.x}" cy="${at.y}" r="${14 + 30 * easeOut(k)}" fill="none" stroke="${CLAY}" stroke-width="3" opacity="${(1 - k) * 0.7}"/>`
-    })
-    .join('')
-  const press = clicks.some(c => t >= c && t < c + 0.12) ? 0.88 : 1
+  const ring = CLICKS.map(c => {
+    const k = (t - c) / 0.4
+    if (k < 0 || k > 1) return ''
+    return `<circle cx="${at.x}" cy="${at.y}" r="${14 + 30 * easeOut(k)}" fill="none" stroke="${CLAY}" stroke-width="3" opacity="${(1 - k) * 0.7}"/>`
+  }).join('')
+  const press = CLICKS.some(c => t >= c && t < c + 0.12) ? 0.88 : 1
   return `<g opacity="${opacity}">${ring}<g transform="translate(${at.x} ${at.y}) scale(${1.7 * press})"><path d="M0 0 L0 21 L5.5 15.5 L9.5 24.5 L13 23 L9 14 L16.5 14 Z" fill="${INK}" stroke="#FFFFFF" stroke-width="1.6" stroke-linejoin="round"/></g></g>`
 }
+const CLICKS = [T.gearClick, T.transitClick, T.closeClick, T.botClick, T.inputClick, T.sendClick]
 
 function frame(t: number): string {
   const style = styleAt(t)
@@ -397,6 +531,7 @@ function frame(t: number): string {
   const endO = ramp(t, T.endIn, T.endIn + 0.5)
   const [caption, capO] = captionAt(t)
   const gearHot = t > T.gearClick - 0.25 && t < T.gearClick + 0.4
+  const hotFolder = t > T.botClick - 0.25 && t < T.botClick + 0.4 ? 'bot' : null
   const parts = [`<rect width="${W}" height="${H}" fill="${BG}"/>`]
   if (titleO > 0)
     parts.push(
@@ -407,7 +542,7 @@ function frame(t: number): string {
       `</g>`,
     )
   if (uiO > 0) {
-    parts.push(`<g opacity="${uiO}">`, text(W / 2, cardY(t) - 120, caption, 50, { weight: 700, anchor: 'middle', opacity: capO }), windowCard(t, style, gearHot), `</g>`)
+    parts.push(`<g opacity="${uiO}">`, text(W / 2, cardY(t) - 120, caption, 50, { weight: 700, anchor: 'middle', opacity: capO }), transcript(t), windowCard(t, gearHot, hotFolder), `</g>`)
     if (panelO > 0) parts.push(`<g opacity="${panelO * uiO}" transform="translate(0 ${panelDy})">`, panelCard(t, style), `</g>`)
   }
   parts.push(cursor(t))
@@ -473,99 +608,40 @@ async function capture(): Promise<void> {
   }
 }
 
-// ---------- soundtrack: synthesized music under sound effects placed on the timeline ----------
-// Everything is generated here (no downloaded music), except the plugin's own done sound,
-// which plays where the plugin would play it.
+// ---------- soundtrack: no music, only what really sounds ----------
+// The mouse clicks, and the plugin's own done sound where the plugin plays it: once this session's reply is written.
+// The plugin plays nothing when another session finishes, for subagents under a named bar, for typing or for the pane.
 const SR = 44100
 function soundtrack(): Float32Array[] {
   const n = Math.ceil(DURATION * SR)
   const L = new Float32Array(n)
   const Rt = new Float32Array(n)
-  const add = (at: number, mono: Float32Array, gain: number, pan = 0) => {
+  const add = (at: number, mono: Float32Array, gain: number) => {
     const o = Math.round(at * SR)
-    const gl = gain * Math.min(1, 1 - pan)
-    const gr = gain * Math.min(1, 1 + pan)
     for (let i = 0; i < mono.length && o + i < n; i++) {
       if (o + i < 0) continue
-      L[o + i] += mono[i] * gl
-      Rt[o + i] += mono[i] * gr
+      L[o + i] += mono[i] * gain
+      Rt[o + i] += mono[i] * gain
     }
   }
-  const make = (sec: number, f: (t: number, i: number) => number) => Float32Array.from({ length: Math.round(sec * SR) }, (_, i) => f(i / SR, i))
+  const make = (sec: number, f: (t: number) => number) => Float32Array.from({ length: Math.round(sec * SR) }, (_, i) => f(i / SR))
   const env = (t: number, a: number, d: number) => (t < a ? t / a : Math.exp(-(t - a) / d))
   // white noise, repeatable
   let seed = 7
   const noise = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648) * 2 - 1
-  const lowpass = (x: Float32Array, cutoff: number) => {
+  const highpass = (x: Float32Array, cutoff: number) => {
     const k = 1 - Math.exp((-2 * Math.PI * cutoff) / SR)
     let y = 0
-    return x.map(v => (y += k * (v - y)))
+    return x.map(v => v - (y += k * (v - y)))
   }
-  const highpass = (x: Float32Array, cutoff: number) => {
-    const lp = lowpass(x, cutoff)
-    return x.map((v, i) => v - lp[i])
-  }
-  const hz = (midi: number) => 440 * Math.pow(2, (midi - 69) / 12)
   const readWav = (name: string) => {
     const buf = readFileSync(new URL(`../plugins/plan-progress/sounds/${name}.wav`, import.meta.url))
     const at = buf.indexOf('data') + 8 // 16-bit mono PCM, as the plugin ships them
     return Float32Array.from({ length: (buf.length - at) >> 1 }, (_, i) => buf.readInt16LE(at + i * 2) / 32768)
   }
-
-  // music: a light, uncluttered loop at 118 BPM in the spirit of product promos. A few soft plucked chords
-  // a bar, a bass note on each beat, a kick on 1 and 3 and a quiet off-beat hat; no claps, nothing held.
-  // Bright triads, one a bar: C, G, Am, F. It sits under the clicks and the done sound, not over them.
-  const BEAT = 60 / 118
-  const BAR = BEAT * 4
-  const CHORDS = [
-    [36, [60, 64, 67]],
-    [43, [59, 62, 67]],
-    [45, [60, 64, 69]],
-    [41, [60, 65, 69]],
-  ] as const
-  const saw = (f: number, t: number) => 2 * ((f * t) % 1) - 1
-  const drumsFrom = T.uiIn - 0.2
-  const drumsTo = T.uiOut + 0.6
-  const musicIn = 0.15
-  for (let b = 0; musicIn + b * BAR < DURATION; b++) {
-    const [root, tones] = CHORDS[b % CHORDS.length]
-    const at = musicIn + b * BAR
-    // plucked chord stabs on a syncopated 16th grid
-    for (const s of [0, 6, 10]) {
-      const stab = make(0.4, t => (tones.reduce((sum, m) => sum + Math.sin(2 * Math.PI * hz(m) * t) + 0.2 * saw(hz(m), t), 0) / tones.length) * env(t, 0.004, 0.1))
-      add(at + (s * BEAT) / 4, lowpass(stab, 1600), 0.09, s === 6 ? 0.2 : -0.2)
-    }
-    // a little lead motif on top, every other bar
-    if (b % 2 === 1)
-      [0, 2, 3, 5].forEach((s, k) => {
-        const m = tones[[2, 1, 2, 0][k]] + 12
-        add(at + BAR / 2 + (s * BEAT) / 4, make(0.3, t => Math.sin(2 * Math.PI * hz(m) * t) * env(t, 0.004, 0.09)), 0.05, 0.1)
-      })
-    const inDrums = at >= drumsFrom - BAR && at < drumsTo
-    for (let e = 0; e < 8; e++) {
-      const t0 = at + (e * BEAT) / 2
-      if (t0 >= DURATION) break
-      const drums = t0 >= drumsFrom && t0 < drumsTo
-      // a bass note on each beat
-      if (e % 2 === 0 && (inDrums || b > 0)) add(t0, lowpass(make(0.4, t => (Math.sin(2 * Math.PI * hz(root) * t) + 0.15 * saw(hz(root), t)) * env(t, 0.004, 0.16)), 400), drums ? 0.15 : 0.1)
-      if (!drums) continue
-      if (e === 0 || e === 4) add(t0, make(0.25, t => Math.sin(2 * Math.PI * (48 + 80 * Math.exp(-t * 35)) * t) * env(t, 0.001, 0.07)), 0.2)
-      if (e % 2) add(t0, highpass(make(0.04, t => noise() * env(t, 0.0005, 0.01)), 8000), 0.025, 0.25)
-    }
-  }
-  // the music fades in under the title and out under the end card
-  for (let i = 0; i < n; i++) {
-    const t = i / SR
-    const g = Math.min(1, t / 0.6) * Math.min(1, (DURATION - t) / 1.4)
-    L[i] *= g
-    Rt[i] *= g
-  }
-
-  // effects: only what really sounds. The mouse clicks, and the plugin's own done sound when the bar finishes;
-  // the plugin plays nothing for subagents under a named bar, for typing or for the pane
   const click = () => highpass(make(0.04, t => (noise() * 0.6 + Math.sin(2 * Math.PI * 2400 * t)) * env(t, 0.0005, 0.006)), 900)
-  for (const c of [T.gearClick, T.transitClick, T.closeClick, T.inputClick, T.sendClick]) add(c, click(), 0.45)
-  add(T.allDone, readWav('done'), 2.2)
+  for (const c of CLICKS) add(c, click(), 0.45)
+  add(T.allDone, readWav('done'), 1)
   // keep peaks under full scale
   const peak = [L, Rt].reduce((m, ch) => ch.reduce((mm, v) => Math.max(mm, Math.abs(v)), m), 0)
   if (peak > 0.89) for (let i = 0; i < n; i++) (L[i] *= 0.89 / peak), (Rt[i] *= 0.89 / peak)
