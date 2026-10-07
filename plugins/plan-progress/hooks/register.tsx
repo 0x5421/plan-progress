@@ -734,7 +734,7 @@ async function pollOthers($: EngineInterface) {
       continue
     }
     if ((f.state === 'done' || f.state === 'needs_input') && f.since > (seen[f.hostId] ?? 0) && now - f.since < KEEP_MS) {
-      rows.push({ hostId: f.hostId, folder: str(String(f.cwd).split('/').pop(), 40), label: str(f.label, 60), state: f.state, since: f.since })
+      rows.push({ hostId: f.hostId, folder: str(String(f.cwd).split('/').pop(), 40), label: str(f.label, 60), state: f.state, since: f.since, ...(leavingAway.has(f.hostId) ? { isLeaving: true } : {}) })
     }
   }
   // waiting on the person first, then the newest finish
@@ -757,6 +757,18 @@ async function markSeen($: EngineInterface, row: OtherSession) {
   }
   lastOthers = ''
   await update($, others, v => ({ ...v, rows: v.rows.filter(r => r.hostId !== row.hostId) }))
+}
+
+// ✕: the row dims for LEAVE_MS, then leaves; the seen mark is written once it has gone, so a read in between keeps it dimmed
+const leavingAway = new Set<string>()
+async function dismissAway($: EngineInterface, row: OtherSession) {
+  if (leavingAway.has(row.hostId)) return
+  leavingAway.add(row.hostId)
+  await update($, others, v => ({ ...v, rows: v.rows.map(r => (r.hostId === row.hostId ? { ...r, isLeaving: true } : r)) }))
+  $.clock.after(LEAVE_MS, async () => {
+    await markSeen($, row)
+    leavingAway.delete(row.hostId)
+  })
 }
 
 async function switchTo($: EngineInterface, row: OtherSession) {
@@ -1253,12 +1265,12 @@ export const register: Register = on => {
           ...(list.length > 0 && hasAway && Svg ? [<Svg key="div-away" source={divider} alt="" width={total} height={1} />] : []),
           ...away.rows.slice(0, MAX_OTHERS).map(r => (
             <Box key={`away-${r.hostId}`} flexDirection="row" alignItems="center" gap={1}>
-              <Text color={STATE_COLOR[r.state]}>{STATE_GLYPH[r.state]}</Text>
-              <Text wrap="truncate">{r.label ? `${r.folder} · ${r.label}` : r.folder}</Text>
+              <Text color={STATE_COLOR[r.state]} dimColor={r.isLeaving}>{STATE_GLYPH[r.state]}</Text>
+              <Text wrap="truncate" dimColor={r.isLeaving}>{r.label ? `${r.folder} · ${r.label}` : r.folder}</Text>
               <Text dimColor>{r.state === 'done' ? '跑完了' : '等你決定'}</Text>
               <Box flexGrow={1} />
               <Button key={`switch-${r.hostId}`} label="切換" onPress={() => switchTo($, r)} />
-              <Button key={`seen-${r.hostId}`} plain dimColor label="✕" onPress={() => markSeen($, r)} />
+              <Button key={`seen-${r.hostId}`} plain dimColor label="✕" onPress={() => dismissAway($, r)} />
             </Box>
           )),
           ...(away.rows.length > MAX_OTHERS || away.running > 0

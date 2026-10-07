@@ -31,7 +31,8 @@ export type Plan = {
 }
 
 // another desktop session that finished or waits on the person, as this session reads it from the shared folder
-export type OtherSession = { hostId: string; folder: string; label: string; state: 'done' | 'needs_input'; since: number }
+// isLeaving: the person pressed ✕; the row dims for a moment, then leaves
+export type OtherSession = { hostId: string; folder: string; label: string; state: 'done' | 'needs_input'; since: number; isLeaving?: boolean }
 export type OthersView = { rows: OtherSession[]; running: number }
 
 declare module 'claude-code' {

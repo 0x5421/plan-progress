@@ -458,9 +458,19 @@ test('other sessions that finished or wait show under the bars; a press switches
   await above.unmount()
   expect((await awayRows($)).rows).toEqual([sid(2)])
   const again = await awayRows($)
+  const label = async (ui: any) => (await ui.find({ type: 'Text', text: '2-proj · task 2' }))?.props.dimColor
+  expect(await label(again.above)).toBeFalsy()
   await again.above.press({ key: `seen-${sid(2)}` })
   await again.above.unmount()
+  // ✕ dims the row first, then it leaves; the seen mark is written once it has gone
+  const fading = await awayRows($)
+  expect(fading.rows).toEqual([sid(2)])
+  expect(await label(fading.above)).toBe(true)
+  await fading.above.unmount()
+  expect(JSON.parse(fs.files.get(`${DIR}/seen.json`)?.text ?? '{}')[sid(2)]).toBeUndefined()
+  await clock.advance(450)
   expect((await awayRows($)).rows).toEqual([])
+  expect(JSON.parse(fs.files.get(`${DIR}/seen.json`)?.text ?? '{}')[sid(2)]).toBe(NOW - 120_000)
   // ✕ only hides: nothing opens
   expect(fs.ran.length).toBe(1)
   // the seen mark holds on the next read of the folder too
