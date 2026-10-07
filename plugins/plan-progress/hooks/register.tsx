@@ -525,7 +525,7 @@ function playNow($: EngineInterface, name: 'decision' | 'error' | 'done') {
 
 // the agents bar is the mod's own; the model never owes it an update
 const AGENTS = 'agents:auto' // slug() never yields ':', so no model id can take it
-const isOpenPlan = (p: Plan) => p.id !== AGENTS && p.state === 'running' && !p.stages.flatMap(s => s.steps).every(s => isFinished(s.status))
+const isOpenPlan = (p: Plan) => p.id !== AGENTS && p.state === 'running' && !p.isFinishing && !p.stages.flatMap(s => s.steps).every(s => isFinished(s.status))
 
 const slug = (s: string) =>
   s
@@ -547,11 +547,18 @@ function placeBar(list: readonly Plan[], next: Plan): Plan[] {
   return rest
 }
 
+// a main-loop turn is running: a done reached inside it sounds once the turn ends, after the reply is written
+let isMainTurn = false
+let owesDone = false
+
 function chime($: EngineInterface, prev: PlanState | undefined, next: PlanState) {
   if (next === prev) return
   if (next === 'needs_input') play($, 'decision')
   if (next === 'error') play($, 'error')
-  if (next === 'done') play($, 'done')
+  if (next === 'done') {
+    if (isMainTurn) owesDone = true
+    else play($, 'done')
+  }
 }
 
 async function putPlan($: EngineInterface, next: Plan) {
@@ -690,6 +697,8 @@ export const register: Register = on => {
     isPlanTouched = false
     hasRefused = false
     isWaitingOnBackground = false
+    isMainTurn = true
+    owesDone = false
 
     return next(e)
   })
@@ -838,7 +847,10 @@ export const register: Register = on => {
     if (next.stages.length === 0) return { deny: `plan_progress: no bar "${id}" yet; create it with title and stages.` }
     isPlanTouched = true
     sinceUpdate = 0
-    await putPlan($, next)
+    // finished mid-turn: the bar holds at its last step until the turn ends, so done comes after the reply
+    const prevState = list.find(p => p.id === id)?.state
+    const isHeld = isMainTurn && next.state === 'done' && prevState !== 'done'
+    await putPlan($, isHeld ? { ...next, state: 'running', isFinishing: true } : next)
     const w = where(next)
 
     const active = next.stages.flatMap(st => st.steps).find(st => st.status === 'active')
@@ -847,7 +859,7 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
-    const live = (await read($, plans)).filter(p => p.state === 'running').pop()
+    const live = (await read($, plans)).filter(p => p.state === 'running' && !p.isFinishing).pop()
     if (live) await update($, plans, list => list.map(p => (p.id === live.id ? { ...p, state: 'needs_input' as const } : p)))
     play($, 'decision')
     const ran = await next(e)
@@ -1163,12 +1175,20 @@ export const register: Register = on => {
       agentHome.delete(agentId)
       waiting.delete(agentId)
     }
-    // a plan whose steps are all finished closes itself
-    for (const p of await read($, plans)) {
-      if (p.id === AGENTS) continue
-      if (p.state === 'done') continue
-      const steps = p.stages.flatMap(s => s.steps)
-      if (steps.length > 0 && steps.every(s => isFinished(s.status))) await putPlan($, { ...p, state: 'done' })
+    // when the main turn ends, a plan whose steps are all finished, or one the model finished mid-turn, closes itself;
+    // the done sound owed by this turn plays once, after the reply
+    if (!agentId) {
+      for (const p of await read($, plans)) {
+        if (p.id === AGENTS) continue
+        if (p.state === 'done') continue
+        const steps = p.stages.flatMap(s => s.steps)
+        if (p.isFinishing || (steps.length > 0 && steps.every(s => isFinished(s.status)))) await putPlan($, { ...p, state: 'done', isFinishing: false })
+      }
+      isMainTurn = false
+      if (owesDone) {
+        owesDone = false
+        play($, 'done')
+      }
     }
 
     return next(e)

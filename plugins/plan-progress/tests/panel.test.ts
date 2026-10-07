@@ -276,3 +276,72 @@ test('sounds play by default, the pane turns them off and on, and the choice is 
   await $.tool.call({ tool: TOOL, id: 'b', state: 'done' } as never)
   expect(host.played).toEqual(['sounds/done.wav', 'sounds/done.wav'])
 })
+
+// one main-loop turn as a session raises it: turn.start, then the model's calls, then turn.complete
+function turns(on: any) {
+  on('turn.start', (_$: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  on('classic.Stop', () => ({}))
+}
+const END = { answer: 'report', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as const
+const barAlt = async ($: any) => {
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  const alts = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '').map((el: any) => String(el.props.alt))
+  await above.unmount()
+  return alts
+}
+
+test('a bar finished mid-turn turns done and sounds only when the main turn ends, after the reply', async ($, on) => {
+  const host = engine(on)
+  turns(on)
+  await $.turn.start({ text: 'do it', turnId: 't1' })
+  await $.tool.call({ tool: TOOL, id: 'a', title: 'a', stages: STAGES } as never)
+  const answer = await $.tool.call({ tool: TOOL, id: 'a', next: true } as never)
+  await $.tool.call({ tool: TOOL, id: 'a', next: true } as never)
+  // the model is told done, so it does not send it again
+  expect(JSON.stringify(answer)).not.toContain('error')
+  expect(host.played).toEqual([])
+  expect((await barAlt($))[0]).not.toContain(': done')
+  // a subagent's turn ending is not the main turn ending
+  await $.turn.complete({ ...END, agentId: 'sub-1', turnId: 't2' } as never)
+  expect(host.played).toEqual([])
+  // the end-of-turn check does not send the model back over a bar it already finished
+  const stop = await $.classic.Stop({ stop_hook_active: false, last_assistant_message: 'report' } as never)
+  expect((stop as { block?: string }).block).toBeUndefined()
+  await $.turn.complete(END as never)
+  expect(host.played).toEqual(['sounds/done.wav'])
+  expect((await barAlt($))[0]).toContain(': done')
+})
+
+test('an explicit done mid-turn waits the same way', async ($, on) => {
+  const host = engine(on)
+  turns(on)
+  await $.turn.start({ text: 'do it', turnId: 't1' })
+  await $.tool.call({ tool: TOOL, id: 'a', title: 'a', stages: STAGES } as never)
+  const answer = await $.tool.call({ tool: TOOL, id: 'a', state: 'done' } as never)
+  expect(JSON.stringify(answer)).toContain('done')
+  expect(host.played).toEqual([])
+  // its steps are not all ticked, yet the end-of-turn check leaves it alone
+  const stop = await $.classic.Stop({ stop_hook_active: false, last_assistant_message: 'report' } as never)
+  expect((stop as { block?: string }).block).toBeUndefined()
+  await $.turn.complete(END as never)
+  expect(host.played).toEqual(['sounds/done.wav'])
+  expect((await barAlt($))[0]).toContain(': done')
+})
+
+test('subagents finishing mid-turn sound done once, when the main turn ends', async ($, on) => {
+  const host = engine(on)
+  turns(on)
+  let n = 0
+  on('agent.spawn', () => ({ agentId: `sub-${++n}`, model: 'haiku' }))
+  await $.turn.start({ text: 'research', turnId: 't1' })
+  const spawn = { tool_use_id: 'u', prompt: 'p', description: 'look around', subagentType: 'Explore', provider: { kind: 'model' }, parentModel: 'opus', background: false, fork: false }
+  await $.agent.spawn(spawn as never)
+  await $.agent.spawn({ ...spawn, tool_use_id: 'u2' } as never)
+  await $.turn.complete({ ...END, agentId: 'sub-1', turnId: 's1' } as never)
+  await $.turn.complete({ ...END, agentId: 'sub-2', turnId: 's2' } as never)
+  // the agents bar is done, but the reply is still being written
+  expect(host.played).toEqual([])
+  await $.turn.complete(END as never)
+  expect(host.played).toEqual(['sounds/done.wav'])
+})

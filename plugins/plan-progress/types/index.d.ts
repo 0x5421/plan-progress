@@ -26,6 +26,8 @@ export type Plan = {
   agentsDoneAt?: number | null
   // set when the person's next message retires a finished bar; it fades out, then leaves the list
   leavingAt?: number | null
+  // the model finished it mid-turn; it turns done, with its sound, once the main turn ends
+  isFinishing?: boolean
 }
 
 declare module 'claude-code' {
