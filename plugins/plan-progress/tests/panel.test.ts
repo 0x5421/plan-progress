@@ -426,60 +426,96 @@ test('a terminal session has no id to switch to, so it writes nothing', async ($
   expect(fs.files.size).toBe(0)
 })
 
-test('other sessions that finished or wait show under the bars; a press switches to one, ✕ hides one', async ($, on) => {
+test('every other session shows its newest bar; its title switches to it, ✕ hides it until it changes', async ($, on) => {
   engine(on, { clock: false })
   const clock = mock.clock(on, { now: NOW })
   const fs = hostFs(on)
-  fs.put(sid(1), 'done', NOW - 60_000)
+  const doneBar = { id: 'b1', title: '第5批回測', kind: 'plan', stages: [{ name: 'Run', steps: [{ title: 'a', status: 'done' }] }], state: 'done', note: null, startedAt: NOW - 200_000 }
+  const workBar = { id: 'b3', title: '修跟賣', kind: 'plan', stages: [{ name: 'Fix', steps: [{ title: 'a', status: 'done' }, { title: 'b', status: 'active' }] }], state: 'running', note: null, startedAt: NOW - 50_000 }
+  const agentsBar = { id: 'agents:auto', title: 'Agents', kind: 'todo', stages: [{ name: 'Agents', steps: [{ title: 'x', status: 'active' }] }], state: 'running', note: null, startedAt: NOW - 5_000 }
+  fs.put(sid(1), 'done', NOW - 60_000, { bars: [doneBar] })
   fs.put(sid(2), 'needs_input', NOW - 120_000)
-  fs.put(sid(3), 'working', NOW - 10_000)
+  fs.put(sid(3), 'working', NOW - 10_000, { bars: [workBar, agentsBar] })
   fs.put(sid(4), 'working', NOW - 10 * 60_000) // a working file nobody refreshed: that session is gone
   fs.put(sid(5), 'done', NOW - 30_000)
   fs.put(sid(6), 'done', NOW - 25 * 3600_000) // older than a day
   fs.put(sid(7), 'ended', NOW - 5_000)
+  fs.put(sid(8), 'working', NOW - 20_000, { bars: [{ id: 'x', title: '<script>', stages: 'nope' }] }) // a bar that does not parse
   fs.put(ME, 'done', NOW - 5_000) // this session itself
   fs.put('evil-session', 'done', NOW - 5_000) // a file whose id is not a desktop session id
   fs.files.set(`${DIR}/seen.json`, { text: JSON.stringify({ [sid(5)]: NOW - 30_000 }), mtimeMs: NOW })
   await start($)
   await clock.advance(2000)
   const { above, tree, rows } = await awayRows($)
-  // waiting on the person first, then the newest finish; seen, stale, ended, own and malformed ones left out
-  expect(rows).toEqual([sid(1), sid(2)])
-  expect(tree.indexOf(`away-${sid(2)}`)).toBeLessThan(tree.indexOf(`away-${sid(1)}`))
-  expect(tree).toContain('1-proj · task 1')
-  expect(tree).toContain('跑完了')
+  // seen, stale, ended, own and malformed ones left out
+  expect(rows).toEqual([sid(1), sid(2), sid(3), sid(8)])
+  // waiting on the person first, then finished, then running (newest first)
+  const at = (n: number) => tree.indexOf(`away-${sid(n)}`)
+  expect(at(2)).toBeLessThan(at(1))
+  expect(at(1)).toBeLessThan(at(3))
+  expect(at(3)).toBeLessThan(at(8))
+  // the newest task bar is drawn, not the subagents' bar; its title is the switch button
+  const svgAlts = (await above.findAll({ type: 'Svg' })).map((el: any) => String(el.props.alt))
+  expect(svgAlts).toContain('1-proj · 第5批回測: 跑完了')
+  expect(svgAlts).toContain('3-proj · 修跟賣: 在跑')
+  expect((await above.find({ key: `switch-${sid(3)}` }))?.text).toBe('3-proj · 修跟賣')
+  // no bar: the row says what the session does
+  expect((await above.find({ key: `switch-${sid(2)}` }))?.text).toBe('2-proj · task 2')
   expect(tree).toContain('等你決定')
-  expect(tree).toContain('另有 1 個 session 在跑')
+  expect(tree).not.toContain('<script>')
   expect(tree).not.toContain('evil')
   expect(tree).not.toContain(`away-${ME}`)
   await above.press({ key: `switch-${sid(1)}` })
   expect(fs.ran).toEqual([['open', `claude://claude.ai/epitaxy/${sid(1)}`]])
   expect(JSON.parse(fs.files.get(`${DIR}/seen.json`)?.text ?? '{}')[sid(1)]).toBe(NOW - 60_000)
   await above.unmount()
-  expect((await awayRows($)).rows).toEqual([sid(2)])
+  expect((await awayRows($)).rows).toEqual([sid(2), sid(3), sid(8)])
   const again = await awayRows($)
-  const label = async (ui: any) => (await ui.find({ type: 'Text', text: '2-proj · task 2' }))?.props.dimColor
+  const label = async (ui: any) => (await ui.find({ key: `switch-${sid(2)}` }))?.props.dimColor
   expect(await label(again.above)).toBeFalsy()
   await again.above.press({ key: `seen-${sid(2)}` })
   await again.above.unmount()
   // ✕ dims the row first, then it leaves; the seen mark is written once it has gone
   const fading = await awayRows($)
-  expect(fading.rows).toEqual([sid(2)])
+  expect(fading.rows).toEqual([sid(2), sid(3), sid(8)])
   expect(await label(fading.above)).toBe(true)
   await fading.above.unmount()
   expect(JSON.parse(fs.files.get(`${DIR}/seen.json`)?.text ?? '{}')[sid(2)]).toBeUndefined()
   await clock.advance(450)
-  expect((await awayRows($)).rows).toEqual([])
+  expect((await awayRows($)).rows).toEqual([sid(3), sid(8)])
   expect(JSON.parse(fs.files.get(`${DIR}/seen.json`)?.text ?? '{}')[sid(2)]).toBe(NOW - 120_000)
   // ✕ only hides: nothing opens
   expect(fs.ran.length).toBe(1)
-  // the seen mark holds on the next read of the folder too
+  // a running session hides too, until it moves to another state
+  const third = await awayRows($)
+  await third.above.press({ key: `seen-${sid(3)}` })
+  await third.above.unmount()
+  await clock.advance(450)
+  expect((await awayRows($)).rows).toEqual([sid(8)])
+  // the seen marks hold on the next read of the folder
   await clock.advance(2000)
-  expect((await awayRows($)).rows).toEqual([])
-  // a session that finishes again shows again
+  expect((await awayRows($)).rows).toEqual([sid(8)])
+  // sessions that change state show again
   fs.put(sid(1), 'done', NOW + 1_000)
+  fs.put(sid(3), 'done', NOW + 1_500, { bars: [{ ...workBar, state: 'done' }] })
   await clock.advance(2000)
-  expect((await awayRows($)).rows).toEqual([sid(1)])
+  expect((await awayRows($)).rows).toEqual([sid(1), sid(3), sid(8)])
+})
+
+test('a bar that moves mid-turn reaches the shared file within a second', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  turns(on)
+  const fs = hostFs(on)
+  await start($)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  expect(fs.mine().bars).toEqual([])
+  await $.tool.call({ tool: TOOL, id: 'ship', title: '上線', stages: STAGES } as never)
+  await clock.advance(1000)
+  expect(fs.mine().bars.map((b: any) => b.title)).toEqual(['上線'])
+  await $.tool.call({ tool: TOOL, id: 'ship', next: true } as never)
+  await clock.advance(1000)
+  expect(fs.mine().bars[0].stages[0].steps.map((st: any) => st.status)).toEqual(['done', 'active'])
 })
 
 test('the pane turns other sessions off and on, saved, on by default', async ($, on) => {

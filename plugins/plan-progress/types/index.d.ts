@@ -30,10 +30,10 @@ export type Plan = {
   isFinishing?: boolean
 }
 
-// another desktop session that finished or waits on the person, as this session reads it from the shared folder
+// another desktop session, as this session reads it from the shared folder: what it does now and its newest bar
 // isLeaving: the person pressed ✕; the row dims for a moment, then leaves
-export type OtherSession = { hostId: string; folder: string; label: string; state: 'done' | 'needs_input'; since: number; isLeaving?: boolean }
-export type OthersView = { rows: OtherSession[]; running: number }
+export type OtherSession = { hostId: string; folder: string; label: string; state: 'working' | 'done' | 'needs_input'; since: number; bar?: Plan; isLeaving?: boolean }
+export type OthersView = { rows: OtherSession[] }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -49,7 +49,7 @@ declare module 'claude-code' {
       style: string
       // how subagent strips show: 'expanded', 'summary' or 'hidden'
       agentView: string
-      // the other sessions that finished or wait on the person, and how many still run
+      // the other sessions that run, finished or wait on the person, each with its newest bar
       others: OthersView
       // whether those other sessions show above the prompt; also in $.store
       crossSessions: boolean

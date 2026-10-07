@@ -666,8 +666,8 @@ const fadeOut = (svg: string, W: number, H: number) =>
 
 // ---------- other sessions: each desktop session writes its status to a shared folder, every session reads the others ----------
 type SessionStatus = 'working' | 'done' | 'needs_input' | 'idle' | 'ended'
-type SessionFile = { v: 1; hostId: string; cwd: string; label: string; state: SessionStatus; since: number; updatedAt: number }
-const others = atom({ plugin: 'plan-progress', key: 'others' } as const, { rows: [], running: 0 } as OthersView)
+type SessionFile = { v: 1; hostId: string; cwd: string; label: string; state: SessionStatus; since: number; updatedAt: number; bars?: unknown[] }
+const others = atom({ plugin: 'plan-progress', key: 'others' } as const, { rows: [] } as OthersView)
 const crossOn = atom({ plugin: 'plan-progress', key: 'crossSessions' } as const, true)
 const CROSS_STORE_KEY = 'crossSessions'
 const setCross = async ($: EngineInterface, isOn: boolean) => {
@@ -681,11 +681,12 @@ const SEEN = 'seen.json'
 const HEARTBEAT_MS = 30_000 // a working session rewrites its file this often
 const WORKING_FRESH_MS = 90_000 // a working file older than this belongs to a session that is gone
 const KEEP_MS = 24 * 3600_000 // a finished session older than this no longer shows
-const MAX_OTHERS = 3
+const MAX_OTHERS = 5
 const POLL_EVERY = 2 // seconds between reads of the shared folder
 let sessionsDir: string | null = null
 let mine: { hostId: string; cwd: string; state: SessionStatus; since: number; lastPrompt: string } | null = null
 let lastBeat = 0
+let lastBars = ''
 let lastOthers = ''
 let pollCount = 0
 
@@ -698,9 +699,25 @@ async function publish($: EngineInterface, state?: SessionStatus) {
     mine.since = now
   }
   lastBeat = now
-  const bar = [...(await read($, plans))].reverse().find(p => p.id !== AGENTS)
-  const file: SessionFile = { v: 1, hostId: mine.hostId, cwd: mine.cwd, label: bar?.title || mine.lastPrompt, state: mine.state, since: mine.since, updatedAt: now }
+  const list = await read($, plans)
+  const bar = [...list].reverse().find(p => p.id !== AGENTS)
+  const bars = barsOf(list)
+  lastBars = JSON.stringify(bars)
+  const file: SessionFile = { v: 1, hostId: mine.hostId, cwd: mine.cwd, label: bar?.title || mine.lastPrompt, state: mine.state, since: mine.since, updatedAt: now, bars }
   await $.fs.write(`${sessionsDir}/${mine.hostId}.json`, JSON.stringify(file)).catch(() => undefined)
+}
+
+// the bars the other sessions draw: shape and state only, no subagent strips, none that is leaving
+const barsOf = (list: readonly Plan[]) =>
+  list.filter(p => !p.leavingAt).map(p => ({ id: p.id, title: p.title, kind: p.kind, stages: p.stages, state: p.state, note: p.note, startedAt: p.startedAt }))
+
+// a bar read from another session's file, rebuilt through the same checks a model's call goes through
+function awayBar(raw: unknown, hostId: string, now: number): Plan | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Raw
+  const p = normalize(r, null, now, `away:${hostId}`)
+  if (p.stages.length === 0) return undefined
+  return { ...p, startedAt: typeof r.startedAt === 'number' && Number.isFinite(r.startedAt) ? r.startedAt : now }
 }
 
 async function readSeen($: EngineInterface): Promise<Record<string, number>> {
@@ -719,7 +736,6 @@ async function pollOthers($: EngineInterface) {
   const entries = await $.fs.list(sessionsDir).catch(() => [])
   const seen = await readSeen($)
   const rows: OtherSession[] = []
-  let running = 0
   for (const entry of entries) {
     if (entry.kind !== 'file' || !entry.name.endsWith('.json') || entry.name === SEEN || now - entry.mtimeMs > KEEP_MS) continue
     let f: SessionFile
@@ -729,17 +745,29 @@ async function pollOthers($: EngineInterface) {
       continue
     }
     if (f?.v !== 1 || !HOST_ID.test(f.hostId) || f.hostId === mine?.hostId) continue
-    if (f.state === 'working') {
-      if (now - f.updatedAt < WORKING_FRESH_MS) running += 1
-      continue
-    }
-    if ((f.state === 'done' || f.state === 'needs_input') && f.since > (seen[f.hostId] ?? 0) && now - f.since < KEEP_MS) {
-      rows.push({ hostId: f.hostId, folder: str(String(f.cwd).split('/').pop(), 40), label: str(f.label, 60), state: f.state, since: f.since, ...(leavingAway.has(f.hostId) ? { isLeaving: true } : {}) })
-    }
+    const isShown =
+      f.state === 'working' ? now - f.updatedAt < WORKING_FRESH_MS : (f.state === 'done' || f.state === 'needs_input') && now - f.since < KEEP_MS
+    // ✕ or a switch hides a session until it changes state again
+    if (!isShown || f.since <= (seen[f.hostId] ?? 0)) continue
+    const bars = (Array.isArray(f.bars) ? f.bars : [])
+      .map(raw => ({ isAgents: (raw as Raw | null)?.id === AGENTS, p: awayBar(raw, f.hostId, now) }))
+      .filter((b): b is { isAgents: boolean; p: Plan } => b.p !== undefined)
+    // its newest task bar, or its subagents' bar when it has no task bar
+    const bar = ([...bars].reverse().find(b => !b.isAgents) ?? bars[bars.length - 1])?.p
+    rows.push({
+      hostId: f.hostId,
+      folder: str(String(f.cwd).split('/').pop(), 40),
+      label: str(f.label, 60),
+      state: f.state as OtherSession['state'],
+      since: f.since,
+      ...(bar ? { bar } : {}),
+      ...(leavingAway.has(f.hostId) ? { isLeaving: true } : {}),
+    })
   }
-  // waiting on the person first, then the newest finish
-  rows.sort((a, b) => (a.state === b.state ? b.since - a.since : a.state === 'needs_input' ? -1 : 1))
-  const view = { rows, running }
+  // waiting on the person first, then finished, then running; the newest first within each
+  const rank = { needs_input: 0, done: 1, working: 2 } as const
+  rows.sort((a, b) => rank[a.state] - rank[b.state] || b.since - a.since)
+  const view = { rows }
   const key = JSON.stringify(view)
   if (key === lastOthers) return
   lastOthers = key
@@ -941,7 +969,9 @@ export const register: Register = on => {
     if (home) sessionsDir = `${home}/.claude/plan-progress/sessions`
     if (hostId && HOST_ID.test(hostId)) mine = { hostId, cwd: await $.session.cwd(), state: 'idle', since: await $.clock.now(), lastPrompt: '' }
     $.clock.every(1000, async () => {
-      if (mine?.state === 'working' && (await $.clock.now()) - lastBeat >= HEARTBEAT_MS) await publish($)
+      // a bar that moved reaches the other sessions within a second; a working session also beats every 30 s
+      const isBarMoved = mine !== null && JSON.stringify(barsOf(await read($, plans))) !== lastBars
+      if (isBarMoved || (mine?.state === 'working' && (await $.clock.now()) - lastBeat >= HEARTBEAT_MS)) await publish($)
       pollCount += 1
       if (pollCount % POLL_EVERY === 0 && (await read($, crossOn))) await pollOthers($)
       // the hairline style shows elapsed time, so it redraws every second while a bar runs
@@ -1200,8 +1230,13 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const list = await read($, plans)
     // other sessions that finished or wait on the person, under this session's own bars
-    const away: OthersView = (await read($, crossOn)) ? await read($, others) : { rows: [], running: 0 }
-    const hasAway = away.rows.length > 0 || away.running > 0
+    const away: OthersView = (await read($, crossOn)) ? await read($, others) : { rows: [] }
+    const hasAway = away.rows.length > 0
+    const shownAway = away.rows.slice(0, MAX_OTHERS)
+    const awayTitle = (r: OtherSession) => {
+      const name = r.bar?.title || r.label
+      return name ? `${r.folder} · ${name}` : r.folder
+    }
     if ((list.length === 0 && !hasAway) || e.props.hasSurvey || !(await read($, isOpen))) return next(e)
     const t = $.ui.resolve(e)
     const { Box, Button, Text } = t
@@ -1210,7 +1245,16 @@ export const register: Register = on => {
     // every bar has the same width and is pinned to the right edge (fixed-width percent, close button),
     // so rows line up whatever their titles; the slack goes into the gap after the title.
     // Desktop reports ~8 CSS px per column; glyph, gaps, percent and the close button take ~126 px.
-    const titleWidth = Math.min(Math.round(total * 0.3), Math.max(0, ...list.map(p => Math.round(textWidth(p.title, 6.4)))))
+    const titleWidth = Math.min(
+      Math.round(total * 0.3),
+      Math.max(0, ...list.map(p => Math.round(textWidth(p.title, 6.4))), ...shownAway.map(r => Math.round(textWidth(awayTitle(r), 6.4)))),
+    )
+    // a button label cannot truncate itself, so another session's title is cut to the title column here
+    const fitTitle = (s: string) => {
+      let shown = s
+      while (shown.length > 3 && textWidth(shown, 6.4) > titleWidth) shown = shown.slice(0, -1)
+      return shown === s ? s : shown.trimEnd() + '…'
+    }
     const style = await styleOf($)
     const look = style === 'original' ? null : STYLES[style]
     const view = await agentViewOf($)
@@ -1263,25 +1307,40 @@ export const register: Register = on => {
         })}
         {[
           ...(list.length > 0 && hasAway && Svg ? [<Svg key="div-away" source={divider} alt="" width={total} height={1} />] : []),
-          ...away.rows.slice(0, MAX_OTHERS).map(r => (
-            <Box key={`away-${r.hostId}`} flexDirection="row" alignItems="center" gap={1}>
-              <Text color={STATE_COLOR[r.state]} dimColor={r.isLeaving}>{STATE_GLYPH[r.state]}</Text>
-              <Text wrap="truncate" dimColor={r.isLeaving}>{r.label ? `${r.folder} · ${r.label}` : r.folder}</Text>
-              <Text dimColor>{r.state === 'done' ? '跑完了' : '等你決定'}</Text>
-              <Box flexGrow={1} />
-              <Button key={`switch-${r.hostId}`} label="切換" onPress={() => switchTo($, r)} />
-              <Button key={`seen-${r.hostId}`} plain dimColor label="✕" onPress={() => dismissAway($, r)} />
-            </Box>
-          )),
-          ...(away.rows.length > MAX_OTHERS || away.running > 0
-            ? [
-                <Text key="away-more" dimColor>
-                  {[away.rows.length > MAX_OTHERS ? `還有 ${away.rows.length - MAX_OTHERS} 個 session 跑完或等你決定` : '', away.running > 0 ? `另有 ${away.running} 個 session 在跑` : '']
-                    .filter(Boolean)
-                    .join('　')}
-                </Text>,
-              ]
-            : []),
+          // each other session as one bar row: its title is the button that switches to it
+          ...shownAway.map(r => {
+            const asState: PlanState = r.state === 'working' ? 'running' : r.state
+            // a session waiting on the person shows its bar amber even when the bar itself still says running
+            const p = r.bar ? { ...r.bar, state: r.state === 'needs_input' && r.bar.state === 'running' ? ('needs_input' as const) : r.bar.state } : null
+            const drawn = p ? drawBar(style, p, trackW, now, null) : null
+            const source = drawn ? (r.isLeaving ? fadeOut(drawn.svg, trackW, drawn.height) : drawn.svg) : ''
+            const glyph = p && look ? look.glyph(p) : { char: STATE_GLYPH[p?.state ?? asState], color: STATE_COLOR[p?.state ?? asState] }
+            const status = r.state === 'done' ? '跑完了' : r.state === 'needs_input' ? '等你決定' : '在跑'
+            const w = p ? where(p) : null
+            const pct = p && w ? (p.state === 'done' ? 100 : Math.round((Math.min(w.pos, w.total) / Math.max(1, w.total)) * 100)) : 0
+            const textBar = `${'━'.repeat(Math.round(pct / 4))}${'─'.repeat(25 - Math.round(pct / 4))}`
+
+            return (
+              <Box key={`away-${r.hostId}`} flexDirection="row" alignItems={drawn && drawn.height > TRACK_H ? 'flex-start' : 'center'} gap={1}>
+                {glyph ? [<Text key="glyph" color={glyph.color} dimColor={r.isLeaving}>{glyph.char}</Text>] : []}
+                <Button key={`switch-${r.hostId}`} plain dimColor={r.isLeaving} label={fitTitle(awayTitle(r))} onPress={() => switchTo($, r)} />
+                <Box flexGrow={1} />
+                {p && drawn && Svg ? (
+                  <Svg source={source} alt={`${awayTitle(r)}: ${status}`} width={trackW} height={drawn.height} />
+                ) : p ? (
+                  <Text>
+                    <Text color={STATE_COLOR[p.state]}>{textBar.replace(/─/g, '')}</Text>
+                    <Text dimColor>{textBar.replace(/━/g, '')}</Text>
+                  </Text>
+                ) : (
+                  <Text dimColor>{status}</Text>
+                )}
+                <Text dimColor>{p ? (look && Svg ? look.right(p, now) : `${String(pct).padStart(3, FIGURE_SPACE)}%`) : ''}</Text>
+                <Button key={`seen-${r.hostId}`} plain dimColor label="✕" onPress={() => dismissAway($, r)} />
+              </Box>
+            )
+          }),
+          ...(away.rows.length > MAX_OTHERS ? [<Text key="away-more" dimColor>{`還有 ${away.rows.length - MAX_OTHERS} 個 session`}</Text>] : []),
         ]}
       </Box>
     )
