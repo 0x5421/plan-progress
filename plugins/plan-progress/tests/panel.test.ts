@@ -536,3 +536,33 @@ test('the pane turns other sessions off and on, saved, on by default', async ($,
   await clock.advance(2000)
   expect((await awayRows($)).rows).toEqual([sid(1)])
 })
+
+test('rows line up: titles are all plain buttons, the text right of the bars sits in one fixed-width column, titles get 40% of the row', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  const doneBar = { id: 'b1', title: '回測', kind: 'plan', stages: [{ name: 'Run', steps: [{ title: 'a', status: 'done' }] }], state: 'done', note: null, startedAt: NOW - 200_000 }
+  fs.put(sid(1), 'done', NOW - 60_000, { bars: [doneBar] })
+  await start($)
+  await $.command.run({ command: 'progress-style', args: 'beads' })
+  // 28 wide characters fit in 40% of a 120-column row (about 384 px) but not in 30% (288 px); 40 do not fit at all
+  const fits = '一二三四五六七八九十'.repeat(3).slice(0, 28)
+  const tooLong = '一二三四五六七八九十'.repeat(4)
+  await $.tool.call({ tool: TOOL, id: 'short', title: fits, stages: STAGES } as never)
+  await $.tool.call({ tool: TOOL, id: 'long', title: tooLong, stages: STAGES } as never)
+  await $.tool.call({ tool: TOOL, id: 'long', state: 'done' } as never)
+  await clock.advance(2000)
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  // every title, this session's and the other sessions', is the same kind of element, so they start at the same place
+  const own = await above.find({ key: 'title-short' })
+  expect(own?.type).toBe('Button')
+  expect(own?.props.plain).toBe(true)
+  expect((await above.find({ key: `switch-${sid(1)}` }))?.props.plain).toBe(true)
+  expect(own?.text).toBe(fits)
+  expect((await above.find({ key: 'title-long' }))?.text).toMatch(/…$/)
+  // 0% beside 100%: the column is as wide as the widest text plus one cell, in every row
+  const cols = (await above.findAll({ type: 'Box' })).filter((el: any) => el.props.justifyContent === 'flex-end')
+  expect(cols.length).toBe(3)
+  expect(new Set(cols.map((el: any) => el.props.width))).toEqual(new Set([5]))
+  await above.unmount()
+})

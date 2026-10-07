@@ -1246,10 +1246,10 @@ export const register: Register = on => {
     // so rows line up whatever their titles; the slack goes into the gap after the title.
     // Desktop reports ~8 CSS px per column; glyph, gaps, percent and the close button take ~126 px.
     const titleWidth = Math.min(
-      Math.round(total * 0.3),
+      Math.round(total * 0.4),
       Math.max(0, ...list.map(p => Math.round(textWidth(p.title, 6.4))), ...shownAway.map(r => Math.round(textWidth(awayTitle(r), 6.4)))),
     )
-    // a button label cannot truncate itself, so another session's title is cut to the title column here
+    // a button label cannot truncate itself, so every title is cut to the title column here
     const fitTitle = (s: string) => {
       let shown = s
       while (shown.length > 3 && textWidth(shown, 6.4) > titleWidth) shown = shown.slice(0, -1)
@@ -1262,6 +1262,14 @@ export const register: Register = on => {
     const trackW = Math.max(120, Math.min(1400, total - titleWidth - 140 - (style === 'hairline' ? 18 : 0)))
     await read($, tick)
     const now = await $.clock.now()
+    // the text right of each bar sits in a column as wide as the widest of them, so every bar's left edge lines up
+    const rightOf = (p: Plan) => {
+      const w = where(p)
+      const pct = p.state === 'done' ? 100 : Math.round((Math.min(w.pos, w.total) / Math.max(1, w.total)) * 100)
+      return look && Svg ? look.right(p, now) : `${String(pct).padStart(3, FIGURE_SPACE)}%`
+    }
+    // one cell more than the longest text: a cell is about 8 px, a wide letter (m, %) a little more than one
+    const rightCells = 1 + Math.max(4, ...list.map(p => rightOf(p).length), ...shownAway.flatMap(r => (r.bar ? [rightOf(r.bar).length] : [])))
     // a hairline between task bars, so each bar and its agent strips read as one group
     const divider = `<svg xmlns="http://www.w3.org/2000/svg" width="${total}" height="1"><rect width="${total}" height="1" fill="#808080" fill-opacity=".22"/></svg>`
 
@@ -1289,7 +1297,8 @@ export const register: Register = on => {
             ...line,
             <Box key={`bar-${p.id}`} flexDirection="row" alignItems={v || drawn.height > TRACK_H ? 'flex-start' : 'center'} gap={1}>
               {glyph ? [<Text key="glyph" color={glyph.color} dimColor={isLeaving}>{glyph.char}</Text>] : []}
-              <Text wrap="truncate" dimColor={isLeaving}>{p.title}</Text>
+              {/* a plain button like the other sessions' titles, so both start at the same place; it does nothing when pressed */}
+              <Button key={`title-${p.id}`} plain dimColor={isLeaving} label={fitTitle(p.title)} onPress={() => undefined} />
               <Box flexGrow={1} />
               {Svg ? (
                 <Svg source={source} alt={alt} width={trackW} height={drawn.height} />
@@ -1300,7 +1309,9 @@ export const register: Register = on => {
                   <Text color={color}>{` ${stageName} ${w.step}/${w.stageSize}`}</Text>
                 </Text>
               )}
-              <Text dimColor>{look && Svg ? look.right(p, now) : `${String(pct).padStart(3, FIGURE_SPACE)}%`}</Text>
+              <Box width={rightCells} justifyContent="flex-end">
+                <Text dimColor>{rightOf(p)}</Text>
+              </Box>
               <Button key={`close-${p.id}`} plain dimColor label="✕" onPress={() => dropPlan($, p.id)} />
             </Box>,
           ]
@@ -1335,7 +1346,9 @@ export const register: Register = on => {
                 ) : (
                   <Text dimColor>{status}</Text>
                 )}
-                <Text dimColor>{p ? (look && Svg ? look.right(p, now) : `${String(pct).padStart(3, FIGURE_SPACE)}%`) : ''}</Text>
+                <Box width={rightCells} justifyContent="flex-end">
+                  <Text dimColor>{p ? rightOf(p) : ''}</Text>
+                </Box>
                 <Button key={`seen-${r.hostId}`} plain dimColor label="✕" onPress={() => dismissAway($, r)} />
               </Box>
             )
