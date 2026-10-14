@@ -87,6 +87,18 @@ Tasks needing more than ~3 edits or commands get a bar via ${TOOL}: create it on
 
 type Raw = Record<string, unknown>
 const str = (v: unknown, max = 120) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '')
+// a message as a person reads it: the app wraps pasted text and slash commands in tags (<pasted_content id="…">,
+// <command-name>/handoff</command-name>), which made a session's row read "<pasted_content id="5589"> 0x…".
+// Pasted text becomes （貼上的內容）, a command its name, and any other tag goes
+const readable = (v: unknown, max = 60) => {
+  if (typeof v !== 'string') return ''
+  const t = v
+    .replace(/<pasted_content\b[^>]*>[\s\S]*?(<\/pasted_content>|$)/g, ' （貼上的內容） ')
+    .replace(/<command-name>\s*([^<]*?)\s*<\/command-name>/g, ' $1 ')
+    .replace(/<command-(message|args)>[\s\S]*?(<\/command-\1>|$)/g, ' ')
+    .replace(/<\/?[a-zA-Z][\w-]*(\s[^<>]*)?>?/g, ' ')
+  return str(t, max)
+}
 const status = (v: unknown): StepStatus => (STATUSES.includes(v as StepStatus) ? (v as StepStatus) : 'pending')
 const list = (v: unknown): Raw[] => (Array.isArray(v) ? v.filter(x => x && typeof x === 'object') : []) as Raw[]
 const isFinished = (s: StepStatus) => s === 'done' || s === 'skipped'
@@ -867,7 +879,7 @@ async function pollOthers($: EngineInterface) {
       hostId: f.hostId,
       folder: str(projectOf(String(f.cwd)), 40),
       ...(typeof f.title === 'string' && f.title ? { title: str(f.title, 60) } : {}),
-      label: str(f.label, 60),
+      label: readable(f.label, 60),
       state: f.state as OtherSession['state'],
       since: f.since,
       ...(typeof f.tool === 'string' && f.tool ? { tool: str(f.tool, 60) } : {}),
@@ -970,7 +982,7 @@ export const register: Register = on => {
     if (!origin || origin.kind === 'composer' || origin.kind === 'bridge' || (origin.kind === 'plugin' && origin.asUser === true)) {
       await fadeOutDone($)
       // the name other sessions show when this one has no bar: the person's own words, never a turn the system opened
-      if (mine) mine.lastPrompt = str(e.text, 30)
+      if (mine) mine.lastPrompt = readable(e.text, 30)
     }
     if (origin?.kind !== 'composer') return next(e)
     const list = await read($, plans)
