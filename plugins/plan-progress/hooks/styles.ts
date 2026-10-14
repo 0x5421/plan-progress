@@ -8,7 +8,7 @@ export const STYLE_INFO: Record<StyleId, string> = {
   segments: '分段：一個階段一格，現在這段最顯眼、做完的變淡（陶土橘）',
   hairline: '細線：2px 細線＋會呼吸的線頭，平常黑白，右邊顯示經過時間',
   beads: '串珠：一步一顆珠子，同階段用線串起來（藍）',
-  ledger: '刻度字：等寬字＋小方格，像終端機游標，只有要注意時才有顏色',
+  ledger: '刻度字：等寬字＋小方格，正在做的那格慢慢呼吸，只有要注意時才有顏色',
   transit: '路線圖：像捷運圖，站名在下方，比其他版本高一點（紫）',
   grid: '點陣：一步一個小方格，階段之間空一格，步驟多也排得下（青）',
   original: '原版：作者的像素顆粒進度條',
@@ -103,10 +103,6 @@ const glyphFor = (p: Plan, own: string): Glyph => ({
   char: p.state === 'needs_input' ? '?' : p.state === 'error' ? '!' : p.state === 'done' ? '✓' : '●',
   color: p.state === 'running' ? (accentGlyph() ?? own) : GLYPH_COLOR[p.state],
 })
-const percent = (p: Plan) => {
-  const w = where(p)
-  return `${p.state === 'done' ? 100 : Math.round((Math.min(w.pos, w.total) / Math.max(1, w.total)) * 100)}%`
-}
 const stepCount = (p: Plan) => {
   const w = where(p)
   return `${Math.min(w.pos, w.total)}/${w.total}`
@@ -297,7 +293,7 @@ const hairline: BarStyle = {
 
 const beads: BarStyle = {
   glyph: p => glyphFor(p, GLYPH_COLOR.blue),
-  right: percent,
+  right: stepCount,
   draw(p, W, now, agents) {
     const H = 22
     const cy = 11
@@ -380,7 +376,7 @@ const ledger: BarStyle = {
         else if (st.status === 'error') out += `<rect x="${n1(x)}" y="5" width="${cw}" height="12" rx="1.5" ${fill('var(--red)')}/>`
         else if (st.status === 'active') {
           const c = p.state === 'needs_input' ? 'var(--amber)' : 'var(--acc, var(--ink))'
-          out += `<rect x="${n1(x)}" y="5" width="${cw}" height="12" rx="1.5" ${fill(c)}><animate attributeName="opacity" values="1;1;.15;.15" keyTimes="0;.5;.5;1" dur="1.05s" repeatCount="indefinite"/></rect>`
+          out += `<rect x="${n1(x)}" y="5" width="${cw}" height="12" rx="1.5" ${fill(c)}><animate attributeName="opacity" values="1;.3;1" keyTimes="0;.5;1" calcMode="spline" keySplines=".45 0 .55 1;.45 0 .55 1" dur="1.8s" repeatCount="indefinite"/></rect>`
         } else out += `<rect x="${n1(x + 0.6)}" y="5.6" width="${cw - 1.2}" height="10.8" rx="1.2" style="fill:none;stroke:var(--faint);stroke-width:1.2"/>`
         x += cw + cg
       }
@@ -398,7 +394,7 @@ const ledger: BarStyle = {
 
 const transit: BarStyle = {
   glyph: p => glyphFor(p, GLYPH_COLOR.violet),
-  right: percent,
+  right: stepCount,
   draw(p, W, now, agents) {
     const H = 36
     const cy = 10

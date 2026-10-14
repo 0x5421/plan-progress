@@ -1017,3 +1017,14 @@ test('a session named by a message shows it as the person reads it, without the 
   expect((await above.find({ key: `switch-${sid(2)}` }))?.text).toBe('2-proj · /handoff')
   await above.unmount()
 })
+
+test('every style but hairline shows the step count right of the bar; hairline shows the time it has run', () => {
+  for (const id of ['segments', 'beads', 'ledger', 'transit', 'grid'] as const) expect(LOOKS[id].right(planOf('running', MID), NOW)).toBe('3/7')
+  expect(LOOKS.hairline.right({ ...(planOf('running', MID) as object), startedAt: NOW - 154_000 } as never, NOW)).toBe('2m 34s')
+})
+
+test('ledger: the current cell breathes on an eased curve instead of blinking on and off', () => {
+  const svg = LOOKS.ledger.draw(planOf('running', MID), 520, NOW, null).svg
+  expect(svg).toContain('values="1;.3;1" keyTimes="0;.5;1" calcMode="spline"')
+  expect(svg).not.toContain('keyTimes="0;.5;.5;1"')
+})
