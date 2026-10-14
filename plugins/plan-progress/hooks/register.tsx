@@ -852,7 +852,6 @@ export const register: Register = on => {
     isWaitingOnBackground = false
     isMainTurn = true
     owesDone = false
-    if (mine) mine.lastPrompt = str(e.text, 30)
     await publish($, 'working')
 
     return next(e)
@@ -864,7 +863,11 @@ export const register: Register = on => {
     // the person's own message, typed here or sent from their phone, retires the finished bars;
     // a prompt with no origin is the person's own too
     const origin = e.origin as { kind: string; asUser?: boolean } | undefined
-    if (!origin || origin.kind === 'composer' || origin.kind === 'bridge' || (origin.kind === 'plugin' && origin.asUser === true)) await fadeOutDone($)
+    if (!origin || origin.kind === 'composer' || origin.kind === 'bridge' || (origin.kind === 'plugin' && origin.asUser === true)) {
+      await fadeOutDone($)
+      // the name other sessions show when this one has no bar: the person's own words, never a turn the system opened
+      if (mine) mine.lastPrompt = str(e.text, 30)
+    }
     if (origin?.kind !== 'composer') return next(e)
     const list = await read($, plans)
     if (list.some(p => p.state === 'needs_input')) {

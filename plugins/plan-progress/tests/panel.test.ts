@@ -401,6 +401,7 @@ test('a desktop session writes its status for the others: working, done, waiting
   on('session.end', () => ({ sessionId: 's1' }))
   const fs = hostFs(on)
   await start($)
+  await $.prompt.submit({ text: '幫我修跟單參數', asUser: true })
   await $.turn.start({ text: '幫我修跟單參數', turnId: 't1' })
   expect(fs.mine()).toMatchObject({ v: 1, hostId: ME, cwd: '/work/memelab', state: 'working', label: '幫我修跟單參數' })
   await $.tool.call({ tool: TOOL, id: 'fix', title: '修跟單參數', stages: STAGES } as never)
@@ -629,4 +630,18 @@ test('every row keeps its ✕ cell, so a running row without a ✕ keeps its bar
   const cells = (await above.findAll({ type: 'Box' })).filter((el: any) => el.props.width === 3 && el.props.justifyContent === 'center')
   expect(cells.length).toBe(3)
   await above.unmount()
+})
+
+test('a session without a bar is named by the last message the person sent, never by a turn the system opened', async ($, on) => {
+  engine(on)
+  turns(on)
+  const fs = hostFs(on)
+  await start($)
+  await $.prompt.submit({ text: '用 sleep 20 等 20 秒', asUser: true })
+  await $.turn.start({ text: '用 sleep 20 等 20 秒', turnId: 't1' })
+  await $.turn.complete(END as never)
+  // a background task finishing opens a turn of its own, with no prompt from the person
+  await $.turn.start({ text: '<task-notification> <task-id>b1</task-id>', turnId: 't2' })
+  await $.turn.complete({ ...END, turnId: 't2' } as never)
+  expect(fs.mine().label).toBe('用 sleep 20 等 20 秒')
 })
