@@ -784,7 +784,13 @@ for (const surface of ['desktop', 'terminal'] as const) {
     const name = await both.find({ key: 'frame-name' })
     expect(name?.props).toMatchObject({ position: 'absolute', top: -1 })
     expect(JSON.stringify(name)).toContain('日曆實測＋行李公斤')
-    if (surface === 'desktop') expect(String((await both.find({ type: 'Svg', alt: '日曆實測＋行李公斤' }))?.props.source)).toContain('class="b"')
+    if (surface === 'desktop') {
+      // the desktop puts a Box one row up about 20 px above the line: the drawing is two rows tall, the name at its middle
+      const svg = await both.find({ type: 'Svg', alt: '日曆實測＋行李公斤' })
+      expect(svg?.props.height).toBe(40)
+      expect(String(svg?.props.source)).toContain('<rect class="b" y="12"')
+      expect(String(svg?.props.source)).toContain('<text x="6" y="24"')
+    }
     await both.unmount()
   })
 }

@@ -717,11 +717,13 @@ const CLOSE_CELLS = 3
 const FRAME_PX = 24
 const FRAME_INSET = 1
 // the name on the frame's top line: its background is the desktop's grey band (measured in the light theme; the dark one
-// is a guess), so the line does not show through the letters
-const FRAME_NAME_H = 16
+// is a guess), so the line does not show through the letters. The desktop places a Box one row up (top: -1) about
+// FRAME_ROW_PX above the line (measured on a screenshot), so the drawing is two rows tall and the name sits at its middle
+const FRAME_ROW_PX = 20
+const FRAME_NAME_H = 2 * FRAME_ROW_PX
 function frameNameSvg(text: string) {
-  const width = Math.round(textWidth(text, 6.2) + 12)
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${FRAME_NAME_H}" viewBox="0 0 ${width} ${FRAME_NAME_H}"><style>.b{fill:#F0F0F0}.w{font:500 12px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}@media (prefers-color-scheme:dark){.b{fill:#2B2B29}.w{fill:#A3A19A}}</style><rect class="b" width="${width}" height="${FRAME_NAME_H}"/><text x="6" y="${FRAME_NAME_H / 2 + 4}" class="w">${esc(text)}</text></svg>`
+  const width = Math.round(textWidth(text, 7.5) + 14)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${FRAME_NAME_H}" viewBox="0 0 ${width} ${FRAME_NAME_H}"><style>.b{fill:#F0F0F0}.w{font:500 12px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}@media (prefers-color-scheme:dark){.b{fill:#2B2B29}.w{fill:#A3A19A}}</style><rect class="b" y="${FRAME_ROW_PX - 8}" width="${width}" height="16"/><text x="6" y="${FRAME_ROW_PX + 4}" class="w">${esc(text)}</text></svg>`
   return { text, svg, width }
 }
 const POLL_EVERY = 2 // seconds between reads of the shared folder
