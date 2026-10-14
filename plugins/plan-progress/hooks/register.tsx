@@ -1427,6 +1427,8 @@ export const register: Register = on => {
   on('session.attach', async ($, e, next) => {
     viewers.add(e.clientId)
     if (mine && isWaitingOnPerson(mine.state)) await writeSeen($, mine.hostId, mine.since)
+    // the person has opened this session and seen its finished bars: they fade out, as after their next message
+    await fadeOutDone($)
 
     return next(e)
   })

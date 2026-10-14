@@ -645,3 +645,43 @@ test('a session without a bar is named by the last message the person sent, neve
   await $.turn.complete({ ...END, turnId: 't2' } as never)
   expect(fs.mine().label).toBe('用 sleep 20 等 20 秒')
 })
+
+test('opening a session fades its finished bars out; running bars stay', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  viewing(on)
+  await $.tool.call({ tool: TOOL, id: 'finished', title: 'finished', stages: STAGES } as never)
+  await $.tool.call({ tool: TOOL, id: 'finished', state: 'done' } as never)
+  await $.tool.call({ tool: TOOL, id: 'working', title: 'working', stages: STAGES } as never)
+  const look = async () => {
+    const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+    const tree = JSON.stringify(await above.drawn())
+    const rows = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '').map((el: any) => String(el.props.source).includes('pp-leave'))
+    await above.unmount()
+    return { tree, rows }
+  }
+  expect((await look()).rows).toEqual([false, false])
+  // the person opens this session from the list, a notification or a bar's title
+  await $.session.attach(DESK as never)
+  expect((await look()).rows).toEqual([true, false])
+  await clock.advance(450)
+  const after = await look()
+  expect(after.rows).toEqual([false])
+  expect(after.tree).toContain('working')
+  expect(after.tree).not.toContain('"finished"')
+})
+
+test('a bar that finishes while the person watches stays until they leave and come back', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  viewing(on)
+  await $.session.attach(DESK as never)
+  await $.tool.call({ tool: TOOL, id: 'job', title: 'job', stages: STAGES } as never)
+  await $.tool.call({ tool: TOOL, id: 'job', state: 'done' } as never)
+  await clock.advance(450)
+  expect(await barCount($)).toBe(1)
+  await $.session.detach({ ...DESK, reason: 'detach' } as never)
+  await $.session.attach(DESK as never)
+  await clock.advance(450)
+  expect(await barCount($)).toBe(0)
+})
