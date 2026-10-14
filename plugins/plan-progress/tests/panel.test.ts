@@ -366,11 +366,18 @@ function hostFs(on: any, env: Record<string, string | undefined> = { HOME: '/hom
     if (!f) throw new Error('missing')
     return { value: f.text }
   })
-  on('fs.list', (_$: unknown, e: { path: string }) => ({
-    value: [...files.entries()]
-      .filter(([p]) => p.startsWith(`${e.path}/`))
-      .map(([p, f]) => ({ name: p.slice(e.path.length + 1), kind: 'file', size: f.text.length, mtimeMs: f.mtimeMs, isLink: false })),
-  }))
+  // a folder lists its own children: files, and the folders deeper files sit in
+  on('fs.list', (_$: unknown, e: { path: string }) => {
+    const kids = new Map<string, { name: string; kind: string; size: number; mtimeMs: number; isLink: boolean }>()
+    for (const [p, f] of files.entries()) {
+      if (!p.startsWith(`${e.path}/`)) continue
+      const rest = p.slice(e.path.length + 1)
+      const name = rest.split('/')[0] ?? rest
+      kids.set(name, rest.includes('/') ? { name, kind: 'dir', size: 0, mtimeMs: f.mtimeMs, isLink: false } : { name, kind: 'file', size: f.text.length, mtimeMs: f.mtimeMs, isLink: false })
+    }
+    return { value: [...kids.values()] }
+  })
+  on('fs.exists', (_$: unknown, e: { path: string }) => ({ value: files.has(e.path) }))
   on('process.run', (_$: unknown, e: { argv: string[] }) => {
     ran.push([...e.argv])
     return { value: { exitCode: 0, stdout: '', stderr: '' } }
@@ -684,4 +691,46 @@ test('a bar that finishes while the person watches stays until they leave and co
   await $.session.attach(DESK as never)
   await clock.advance(450)
   expect(await barCount($)).toBe(0)
+})
+
+const APP_DIR = '/home/me/Library/Application Support/Claude/claude-code-sessions'
+const appRecord = (fs: ReturnType<typeof hostFs>, hostId: string, title: string) =>
+  fs.files.set(`${APP_DIR}/acct-1/org-1/${hostId}.json`, { text: JSON.stringify({ sessionId: hostId, title, enabledMcpTools: {} }), mtimeMs: NOW })
+
+test('a session publishes the title the app lists it under, and picks up a title the app sets later', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  turns(on)
+  const fs = hostFs(on)
+  appRecord(fs, sid(9), 'not this one')
+  appRecord(fs, ME, '')
+  await start($)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  expect(fs.mine().title).toBe('')
+  // the app titles the session after its first turn
+  appRecord(fs, ME, 'AGENTS.md 規則：優先列出需求')
+  await clock.advance(60_000)
+  expect(fs.mine().title).toBe('AGENTS.md 規則：優先列出需求')
+  // and a turn's end reads it too
+  appRecord(fs, ME, '改過的標題')
+  await $.turn.complete(END as never)
+  expect(fs.mine().title).toBe('改過的標題')
+})
+
+test('another session is named by its app title; without one, by its project (not a worktree folder) and its bar or message', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  const wt = '/work/apm-monitor/.claude/worktrees/intelligent-sanderson-d2ebc9'
+  fs.put(sid(1), 'working', NOW - 10_000, { title: 'ctv 回撤未停查因', cwd: wt })
+  fs.put(sid(2), 'working', NOW - 10_000, { cwd: wt, label: '查跟賣' })
+  fs.put(sid(3), 'working', NOW - 10_000, { cwd: wt, label: '' })
+  await start($)
+  await clock.advance(2000)
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  expect((await above.find({ key: `switch-${sid(1)}` }))?.text).toBe('ctv 回撤未停查因')
+  expect((await above.find({ key: `switch-${sid(2)}` }))?.text).toBe('apm-monitor · 查跟賣')
+  expect((await above.find({ key: `switch-${sid(3)}` }))?.text).toBe('apm-monitor')
+  expect(JSON.stringify(await above.drawn())).not.toContain('intelligent-sanderson')
+  await above.unmount()
 })

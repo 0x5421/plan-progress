@@ -666,7 +666,7 @@ const fadeOut = (svg: string, W: number, H: number) =>
 
 // ---------- other sessions: each desktop session writes its status to a shared folder, every session reads the others ----------
 type SessionStatus = 'working' | 'done' | 'needs_input' | 'idle' | 'ended'
-type SessionFile = { v: 1; hostId: string; cwd: string; label: string; state: SessionStatus; since: number; updatedAt: number; bars?: unknown[] }
+type SessionFile = { v: 1; hostId: string; cwd: string; label: string; title?: string; state: SessionStatus; since: number; updatedAt: number; bars?: unknown[] }
 const others = atom({ plugin: 'plan-progress', key: 'others' } as const, { rows: [] } as OthersView)
 const crossOn = atom({ plugin: 'plan-progress', key: 'crossSessions' } as const, true)
 const CROSS_STORE_KEY = 'crossSessions'
@@ -677,6 +677,8 @@ const setCross = async ($: EngineInterface, isOn: boolean) => {
 // the desktop's own session id; the link is built from it, never read from a file, since `open` acts on whatever it is given
 const HOST_ID = /^local_[0-9a-f-]{36}$/
 const linkOf = (hostId: string) => `claude://claude.ai/epitaxy/${hostId}`
+// a session in a worktree (<project>/.claude/worktrees/<random name>) is named by its project, not the random folder
+const projectOf = (cwd: string) => (cwd.includes('/.claude/worktrees/') ? cwd.split('/.claude/worktrees/')[0] : cwd).split('/').pop() ?? ''
 const SEEN = 'seen.json'
 const HEARTBEAT_MS = 30_000 // a working session rewrites its file this often
 const WORKING_FRESH_MS = 90_000 // a working file older than this belongs to a session that is gone
@@ -686,6 +688,11 @@ const MAX_OTHERS = 5
 const CLOSE_CELLS = 3
 const POLL_EVERY = 2 // seconds between reads of the shared folder
 let sessionsDir: string | null = null
+// the app's own record of each desktop session, which holds the title its sessions list shows
+let appSessionsDir: string | null = null
+let appRecord: string | null = null
+let appTitle = ''
+const TITLE_EVERY = 60 // seconds between rereads of the title, which the app may set after the first turn
 let mine: { hostId: string; cwd: string; state: SessionStatus; since: number; lastPrompt: string } | null = null
 let lastBeat = 0
 let lastBars = ''
@@ -708,10 +715,37 @@ async function publish($: EngineInterface, state?: SessionStatus) {
   const bar = [...list].reverse().find(p => p.id !== AGENTS)
   const bars = barsOf(list)
   lastBars = JSON.stringify(bars)
-  const file: SessionFile = { v: 1, hostId: mine.hostId, cwd: mine.cwd, label: bar?.title || mine.lastPrompt, state: mine.state, since: mine.since, updatedAt: now, bars }
+  const file: SessionFile = { v: 1, hostId: mine.hostId, cwd: mine.cwd, label: bar?.title || mine.lastPrompt, title: appTitle, state: mine.state, since: mine.since, updatedAt: now, bars }
   await $.fs.write(`${sessionsDir}/${mine.hostId}.json`, JSON.stringify(file)).catch(() => undefined)
   // the person is looking at this session as it finishes: the other sessions need not show it
   if (state && isWaitingOnPerson(state) && viewers.size > 0) await writeSeen($, mine.hostId, mine.since)
+}
+
+// reads this session's title from the app's record of it (claude-code-sessions/<account>/<org>/<id>.json), the name
+// its sessions list shows. That file is the app's own, not an interface: when it is missing or changes shape, the
+// title stays empty and the other sessions fall back to the bar's title or the person's last message
+async function refreshTitle($: EngineInterface): Promise<boolean> {
+  if (!mine || !appSessionsDir) return false
+  if (!appRecord) {
+    for (const a of await $.fs.list(appSessionsDir).catch(() => [])) {
+      if (a.kind !== 'dir') continue
+      for (const b of await $.fs.list(`${appSessionsDir}/${a.name}`).catch(() => [])) {
+        const path = `${appSessionsDir}/${a.name}/${b.name}/${mine.hostId}.json`
+        if (b.kind === 'dir' && (await $.fs.exists(path).catch(() => false))) appRecord = path
+      }
+    }
+    if (!appRecord) return false
+  }
+  let title = ''
+  try {
+    const record = JSON.parse((await $.fs.read(appRecord)) as string)
+    title = typeof record?.title === 'string' ? str(record.title, 60) : ''
+  } catch {
+    appRecord = null
+  }
+  if (title === appTitle) return false
+  appTitle = title
+  return true
 }
 
 // the bars the other sessions draw: shape and state only, no subagent strips, none that is leaving
@@ -764,7 +798,8 @@ async function pollOthers($: EngineInterface) {
     const bar = ([...bars].reverse().find(b => !b.isAgents) ?? bars[bars.length - 1])?.p
     rows.push({
       hostId: f.hostId,
-      folder: str(String(f.cwd).split('/').pop(), 40),
+      folder: str(projectOf(String(f.cwd)), 40),
+      ...(typeof f.title === 'string' && f.title ? { title: str(f.title, 60) } : {}),
       label: str(f.label, 60),
       state: f.state as OtherSession['state'],
       since: f.since,
@@ -852,6 +887,7 @@ export const register: Register = on => {
     isWaitingOnBackground = false
     isMainTurn = true
     owesDone = false
+    await refreshTitle($)
     await publish($, 'working')
 
     return next(e)
@@ -982,13 +1018,16 @@ export const register: Register = on => {
     const home = await $.env.get('HOME')
     const hostId = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID')
     if (home) sessionsDir = `${home}/.claude/plan-progress/sessions`
+    if (home) appSessionsDir = `${home}/Library/Application Support/Claude/claude-code-sessions`
     if (hostId && HOST_ID.test(hostId)) mine = { hostId, cwd: await $.session.cwd(), state: 'idle', since: await $.clock.now(), lastPrompt: '' }
+    await refreshTitle($)
     $.clock.every(1000, async () => {
       // a bar that moved reaches the other sessions within a second; a working session also beats every 30 s
       const isBarMoved = mine !== null && JSON.stringify(barsOf(await read($, plans))) !== lastBars
       if (isBarMoved || (mine?.state === 'working' && (await $.clock.now()) - lastBeat >= HEARTBEAT_MS)) await publish($)
       pollCount += 1
       if (pollCount % POLL_EVERY === 0 && (await read($, crossOn))) await pollOthers($)
+      if (pollCount % TITLE_EVERY === 0 && (await refreshTitle($))) await publish($)
       // the hairline style shows elapsed time, so it redraws every second while a bar runs
       const isTiming = (await styleOf($)) === 'hairline' && (await read($, plans)).some(p => p.state !== 'done')
       if (isTiming || agentHome.size > 0 || (await $.clock.now()) < foldUntil) await update($, tick, n => n + 1)
@@ -1248,7 +1287,9 @@ export const register: Register = on => {
     const away: OthersView = (await read($, crossOn)) ? await read($, others) : { rows: [] }
     const hasAway = away.rows.length > 0
     const shownAway = away.rows.slice(0, MAX_OTHERS)
+    // the name the app's sessions list shows; without it (an older plugin, or the app's record unread), folder and bar title
     const awayTitle = (r: OtherSession) => {
+      if (r.title) return r.title
       const name = r.bar?.title || r.label
       return name ? `${r.folder} · ${name}` : r.folder
     }
@@ -1474,6 +1515,7 @@ export const register: Register = on => {
       }
       // what the other sessions show: a reply ending in a question waits on the person; an interrupted turn shows nothing
       const isAsking = /[?？]\s*$/.test(e.answer ?? '')
+      await refreshTitle($)
       await publish($, e.reason !== 'answer' ? 'idle' : isAsking ? 'needs_input' : 'done')
     }
 
