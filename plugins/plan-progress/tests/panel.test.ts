@@ -486,15 +486,14 @@ test('every other session shows its newest bar; its title switches to it, ✕ hi
   expect(JSON.parse(fs.files.get(`${DIR}/seen.json`)?.text ?? '{}')[sid(2)]).toBe(NOW - 120_000)
   // ✕ only hides: nothing opens
   expect(fs.ran.length).toBe(1)
-  // a running session hides too, until it moves to another state
+  // a running session always shows: it has no ✕, and even a seen mark does not hide it
   const third = await awayRows($)
-  await third.above.press({ key: `seen-${sid(3)}` })
+  expect(await third.above.find({ key: `seen-${sid(3)}` })).toBeUndefined()
   await third.above.unmount()
-  await clock.advance(450)
-  expect((await awayRows($)).rows).toEqual([sid(8)])
-  // the seen marks hold on the next read of the folder
+  const marks = JSON.parse(fs.files.get(`${DIR}/seen.json`)?.text ?? '{}')
+  fs.files.set(`${DIR}/seen.json`, { text: JSON.stringify({ ...marks, [sid(3)]: NOW }), mtimeMs: NOW })
   await clock.advance(2000)
-  expect((await awayRows($)).rows).toEqual([sid(8)])
+  expect((await awayRows($)).rows).toEqual([sid(3), sid(8)])
   // sessions that change state show again
   fs.put(sid(1), 'done', NOW + 1_000)
   fs.put(sid(3), 'done', NOW + 1_500, { bars: [{ ...workBar, state: 'done' }] })
@@ -564,5 +563,70 @@ test('rows line up: titles are all plain buttons, the text right of the bars sit
   const cols = (await above.findAll({ type: 'Box' })).filter((el: any) => el.props.justifyContent === 'flex-end')
   expect(cols.length).toBe(3)
   expect(new Set(cols.map((el: any) => el.props.width))).toEqual(new Set([5]))
+  await above.unmount()
+})
+
+// the desktop attaches to a session while it shows it, and detaches when the person leaves it
+function viewing(on: any) {
+  on('session.attach', (_$: unknown, e: { clientId: string }) => ({ clientId: e.clientId }))
+  on('session.detach', (_$: unknown, e: { clientId: string }) => ({ clientId: e.clientId }))
+}
+const DESK = { surface: 'desktop', clientId: 'desktop-2' }
+const seenOf = (fs: ReturnType<typeof hostFs>) => JSON.parse(fs.files.get(`${DIR}/seen.json`)?.text ?? '{}')
+
+test('opening a finished session from anywhere marks it seen for every session; opening a running one marks nothing', async ($, on) => {
+  engine(on)
+  turns(on)
+  viewing(on)
+  const fs = hostFs(on)
+  await start($)
+  // it runs while the person is elsewhere
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.session.attach(DESK as never)
+  expect(seenOf(fs)[ME]).toBeUndefined()
+  await $.session.detach({ ...DESK, reason: 'detach' } as never)
+  // it finishes unwatched: the others show it
+  await $.turn.complete(END as never)
+  expect(fs.mine().state).toBe('done')
+  expect(seenOf(fs)[ME]).toBeUndefined()
+  // the person opens it, from the list, a notification or a bar's title alike
+  await $.session.attach(DESK as never)
+  expect(seenOf(fs)[ME]).toBe(fs.mine().since)
+})
+
+test('a session watched as it finishes is seen at once; one left before it finishes is not', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  turns(on)
+  viewing(on)
+  const fs = hostFs(on)
+  await start($)
+  await $.session.attach(DESK as never)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.complete({ ...END, answer: '要部署嗎？' } as never)
+  expect(fs.mine().state).toBe('needs_input')
+  expect(seenOf(fs)[ME]).toBe(fs.mine().since)
+  // the person leaves; the next finish waits for them
+  await $.session.detach({ ...DESK, reason: 'detach' } as never)
+  await clock.advance(1000)
+  await $.turn.start({ text: 'next', turnId: 't2' })
+  await $.turn.complete({ ...END, turnId: 't2' } as never)
+  expect(seenOf(fs)[ME]).toBeLessThan(fs.mine().since)
+})
+
+test('every row keeps its ✕ cell, so a running row without a ✕ keeps its bar in line', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  fs.put(sid(1), 'done', NOW - 60_000)
+  fs.put(sid(2), 'working', NOW - 10_000)
+  await start($)
+  await $.tool.call({ tool: TOOL, id: 'mine', title: 'mine', stages: STAGES } as never)
+  await clock.advance(2000)
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  expect(await above.find({ key: `seen-${sid(1)}` })).toBeDefined()
+  expect(await above.find({ key: `seen-${sid(2)}` })).toBeUndefined()
+  const cells = (await above.findAll({ type: 'Box' })).filter((el: any) => el.props.width === 3 && el.props.justifyContent === 'center')
+  expect(cells.length).toBe(3)
   await above.unmount()
 })

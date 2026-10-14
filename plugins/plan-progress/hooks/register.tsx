@@ -682,11 +682,16 @@ const HEARTBEAT_MS = 30_000 // a working session rewrites its file this often
 const WORKING_FRESH_MS = 90_000 // a working file older than this belongs to a session that is gone
 const KEEP_MS = 24 * 3600_000 // a finished session older than this no longer shows
 const MAX_OTHERS = 5
+// every row's ✕ sits in a cell this wide, so a row without one keeps its bar in line
+const CLOSE_CELLS = 3
 const POLL_EVERY = 2 // seconds between reads of the shared folder
 let sessionsDir: string | null = null
 let mine: { hostId: string; cwd: string; state: SessionStatus; since: number; lastPrompt: string } | null = null
 let lastBeat = 0
 let lastBars = ''
+// the desktop (or a phone) attaches to a session while it shows it and detaches when the person leaves it
+const viewers = new Set<string>()
+const isWaitingOnPerson = (s: SessionStatus) => s === 'done' || s === 'needs_input'
 let lastOthers = ''
 let pollCount = 0
 
@@ -705,6 +710,8 @@ async function publish($: EngineInterface, state?: SessionStatus) {
   lastBars = JSON.stringify(bars)
   const file: SessionFile = { v: 1, hostId: mine.hostId, cwd: mine.cwd, label: bar?.title || mine.lastPrompt, state: mine.state, since: mine.since, updatedAt: now, bars }
   await $.fs.write(`${sessionsDir}/${mine.hostId}.json`, JSON.stringify(file)).catch(() => undefined)
+  // the person is looking at this session as it finishes: the other sessions need not show it
+  if (state && isWaitingOnPerson(state) && viewers.size > 0) await writeSeen($, mine.hostId, mine.since)
 }
 
 // the bars the other sessions draw: shape and state only, no subagent strips, none that is leaving
@@ -747,8 +754,9 @@ async function pollOthers($: EngineInterface) {
     if (f?.v !== 1 || !HOST_ID.test(f.hostId) || f.hostId === mine?.hostId) continue
     const isShown =
       f.state === 'working' ? now - f.updatedAt < WORKING_FRESH_MS : (f.state === 'done' || f.state === 'needs_input') && now - f.since < KEEP_MS
-    // ✕ or a switch hides a session until it changes state again
-    if (!isShown || f.since <= (seen[f.hostId] ?? 0)) continue
+    // a finish that was seen (opened, switched to, or ✕) hides until the session changes state again;
+    // a running session always shows
+    if (!isShown || (f.state !== 'working' && f.since <= (seen[f.hostId] ?? 0))) continue
     const bars = (Array.isArray(f.bars) ? f.bars : [])
       .map(raw => ({ isAgents: (raw as Raw | null)?.id === AGENTS, p: awayBar(raw, f.hostId, now) }))
       .filter((b): b is { isAgents: boolean; p: Plan } => b.p !== undefined)
@@ -775,14 +783,18 @@ async function pollOthers($: EngineInterface) {
 }
 
 // the person has seen this finish: every session stops showing it until that session finishes again
+// writes that a session's finish (the state that began at `since`) has been seen, for every session to read
+async function writeSeen($: EngineInterface, hostId: string, since: number) {
+  if (!sessionsDir) return
+  const now = await $.clock.now()
+  const seen = await readSeen($)
+  seen[hostId] = since
+  for (const [id, at] of Object.entries(seen)) if (now - at > KEEP_MS) delete seen[id]
+  await $.fs.write(`${sessionsDir}/${SEEN}`, JSON.stringify(seen)).catch(() => undefined)
+}
+
 async function markSeen($: EngineInterface, row: OtherSession) {
-  if (sessionsDir) {
-    const now = await $.clock.now()
-    const seen = await readSeen($)
-    seen[row.hostId] = row.since
-    for (const [id, at] of Object.entries(seen)) if (now - at > KEEP_MS) delete seen[id]
-    await $.fs.write(`${sessionsDir}/${SEEN}`, JSON.stringify(seen)).catch(() => undefined)
-  }
+  await writeSeen($, row.hostId, row.since)
   lastOthers = ''
   await update($, others, v => ({ ...v, rows: v.rows.filter(r => r.hostId !== row.hostId) }))
 }
@@ -1312,7 +1324,9 @@ export const register: Register = on => {
               <Box width={rightCells} justifyContent="flex-end">
                 <Text dimColor>{rightOf(p)}</Text>
               </Box>
-              <Button key={`close-${p.id}`} plain dimColor label="✕" onPress={() => dropPlan($, p.id)} />
+              <Box width={CLOSE_CELLS} justifyContent="center">
+                <Button key={`close-${p.id}`} plain dimColor label="✕" onPress={() => dropPlan($, p.id)} />
+              </Box>
             </Box>,
           ]
         })}
@@ -1349,7 +1363,10 @@ export const register: Register = on => {
                 <Box width={rightCells} justifyContent="flex-end">
                   <Text dimColor>{p ? rightOf(p) : ''}</Text>
                 </Box>
-                <Button key={`seen-${r.hostId}`} plain dimColor label="✕" onPress={() => dismissAway($, r)} />
+                {/* a running session always shows, so it has no ✕; the empty cell keeps its bar in line */}
+                <Box width={CLOSE_CELLS} justifyContent="center">
+                  {r.state === 'working' ? [] : [<Button key={`seen-${r.hostId}`} plain dimColor label="✕" onPress={() => dismissAway($, r)} />]}
+                </Box>
               </Box>
             )
           }),
@@ -1400,6 +1417,21 @@ export const register: Register = on => {
     }
 
     return verdict
+  })
+
+  // the desktop attaches while it shows this session: opened from the list, a notification or a bar's title,
+  // a finish waiting here is seen, so the other sessions stop showing it
+  on('session.attach', async ($, e, next) => {
+    viewers.add(e.clientId)
+    if (mine && isWaitingOnPerson(mine.state)) await writeSeen($, mine.hostId, mine.since)
+
+    return next(e)
+  })
+
+  on('session.detach', async ($, e, next) => {
+    viewers.delete(e.clientId)
+
+    return next(e)
   })
 
   // a closed session leaves the other sessions' lists
