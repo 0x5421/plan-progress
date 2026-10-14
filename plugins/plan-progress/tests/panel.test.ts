@@ -761,6 +761,7 @@ for (const surface of ['desktop', 'terminal'] as const) {
     engine(on, { clock: false })
     const clock = mock.clock(on, { now: NOW })
     const fs = hostFs(on)
+    appRecord(fs, ME, '日曆實測＋行李公斤')
     await start($)
     await $.tool.call({ tool: TOOL, id: 'mine', title: 'mine', stages: STAGES } as never)
     const mount = () => $.ui.mount({ plugin: 'plan-progress', surface, component: 'AbovePrompt', props: ABOVE as never })
@@ -779,6 +780,11 @@ for (const surface of ['desktop', 'terminal'] as const) {
     const list = await both.find({ key: 'away-list' })
     expect(JSON.stringify(list)).toContain(`switch-${sid(1)}`)
     expect(list?.props.paddingX).toBe(surface === 'terminal' ? 2 : 1)
+    // this session's name, as the other sessions show it, sits on the frame's top line and takes no row of its own
+    const name = await both.find({ key: 'frame-name' })
+    expect(name?.props).toMatchObject({ position: 'absolute', top: -1 })
+    expect(JSON.stringify(name)).toContain('日曆實測＋行李公斤')
+    if (surface === 'desktop') expect(String((await both.find({ type: 'Svg', alt: '日曆實測＋行李公斤' }))?.props.source)).toContain('class="b"')
     await both.unmount()
   })
 }

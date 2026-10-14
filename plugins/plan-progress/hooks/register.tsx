@@ -716,6 +716,14 @@ const CLOSE_CELLS = 3
 // (a terminal draws the border as a whole cell, so there the rows under it move in one cell more)
 const FRAME_PX = 24
 const FRAME_INSET = 1
+// the name on the frame's top line: its background is the desktop's grey band (measured in the light theme; the dark one
+// is a guess), so the line does not show through the letters
+const FRAME_NAME_H = 16
+function frameNameSvg(text: string) {
+  const width = Math.round(textWidth(text, 6.2) + 12)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${FRAME_NAME_H}" viewBox="0 0 ${width} ${FRAME_NAME_H}"><style>.b{fill:#F0F0F0}.w{font:500 12px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}@media (prefers-color-scheme:dark){.b{fill:#2B2B29}.w{fill:#A3A19A}}</style><rect class="b" width="${width}" height="${FRAME_NAME_H}"/><text x="6" y="${FRAME_NAME_H / 2 + 4}" class="w">${esc(text)}</text></svg>`
+  return { text, svg, width }
+}
 const POLL_EVERY = 2 // seconds between reads of the shared folder
 let sessionsDir: string | null = null
 // the app's own record of each desktop session, which holds the title its sessions list shows
@@ -1354,6 +1362,7 @@ export const register: Register = on => {
     // with other sessions under it, this session's own bars sit in a rounded frame; every row gives up the frame's width
     // (its border and padding) so the bars inside and outside it still line up
     const isFramed = list.length > 0 && hasAway
+    const frameName = frameNameSvg(str(appTitle || '這個 session', 40))
     const frameSlack = isFramed ? FRAME_PX : 0
     const trackW = Math.max(120, Math.min(1400, total - titleWidth - 140 - frameSlack - (style === 'hairline' ? 18 : 0)))
     await read($, tick)
@@ -1467,6 +1476,15 @@ export const register: Register = on => {
         {isFramed
           ? [
               <Box key="own-frame" flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
+                {/* this session's name, the one the other sessions show for it, sits on the frame's top line: on the
+                    desktop its drawing's background hides the line behind it, a terminal writes the letters over the line's cells */}
+                <Box key="frame-name" position="absolute" top={-1} left={1}>
+                  {Svg && e.surface !== 'terminal' ? (
+                    <Svg source={frameName.svg} alt={frameName.text} width={frameName.width} height={FRAME_NAME_H} />
+                  ) : (
+                    <Text dimColor>{` ${frameName.text} `}</Text>
+                  )}
+                </Box>
                 {ownRows}
               </Box>,
               // the other sessions keep the frame's inset, without its line, so their bars stay under the framed ones
