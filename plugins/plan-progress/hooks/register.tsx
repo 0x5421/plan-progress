@@ -690,6 +690,11 @@ const KEEP_MS = 24 * 3600_000 // a finished session older than this no longer sh
 const MAX_OTHERS = 5
 // every row's ✕ sits in a cell this wide, so a row without one keeps its bar in line
 const CLOSE_CELLS = 3
+// this session's own bars sit in a rounded frame when other sessions show under them: the frame's border and padding
+// take about FRAME_PX across, and the rows under it are inset by FRAME_INSET cells so both groups line up
+// (a terminal draws the border as a whole cell, so there the rows under it move in one cell more)
+const FRAME_PX = 24
+const FRAME_INSET = 1
 const POLL_EVERY = 2 // seconds between reads of the shared folder
 let sessionsDir: string | null = null
 // the app's own record of each desktop session, which holds the title its sessions list shows
@@ -1319,7 +1324,11 @@ export const register: Register = on => {
     const look = style === 'original' ? null : STYLES[style]
     const view = await agentViewOf($)
     // the hairline's elapsed time is wider than a percent
-    const trackW = Math.max(120, Math.min(1400, total - titleWidth - 140 - (style === 'hairline' ? 18 : 0)))
+    // with other sessions under it, this session's own bars sit in a rounded frame; every row gives up the frame's width
+    // (its border and padding) so the bars inside and outside it still line up
+    const isFramed = list.length > 0 && hasAway
+    const frameSlack = isFramed ? FRAME_PX : 0
+    const trackW = Math.max(120, Math.min(1400, total - titleWidth - 140 - frameSlack - (style === 'hairline' ? 18 : 0)))
     await read($, tick)
     const now = await $.clock.now()
     // the text right of each bar sits in a column as wide as the widest of them, so every bar's left edge lines up
@@ -1331,18 +1340,17 @@ export const register: Register = on => {
     // one cell more than the longest text: a cell is about 8 px, a wide letter (m, %) a little more than one
     const rightCells = 1 + Math.max(4, ...list.map(p => rightOf(p).length), ...shownAway.flatMap(r => (r.bar ? [rightOf(r.bar).length] : [])))
     // a hairline between task bars, so each bar and its agent strips read as one group
-    const divider = `<svg xmlns="http://www.w3.org/2000/svg" width="${total}" height="1"><rect width="${total}" height="1" fill="#808080" fill-opacity=".22"/></svg>`
+    const lineW = total - frameSlack
+    const divider = `<svg xmlns="http://www.w3.org/2000/svg" width="${lineW}" height="1"><rect width="${lineW}" height="1" fill="#808080" fill-opacity=".22"/></svg>`
 
-    return (
-      <Box flexDirection="column" gap={1}>
-        {list.flatMap((p, i) => {
+    const ownRows = list.flatMap((p, i) => {
           const v = applyAgentView(visibleAgents(p, now), view)
           const drawn = drawBar(style, p, trackW, now, v)
           const isLeaving = Boolean(p.leavingAt)
           const source = isLeaving ? fadeOut(drawn.svg, trackW, drawn.height) : drawn.svg
           const glyph = look ? look.glyph(p) : { char: STATE_GLYPH[p.state], color: STATE_COLOR[p.state] }
           const agentsAlt = v ? `; agents: ${(p.agents ?? []).map(a => `${a.title} ${a.state}`).join(', ')}` : ''
-          const line = i > 0 && Svg ? [<Svg key={`div-${p.id}`} source={divider} alt="" width={total} height={1} />] : []
+          const line = i > 0 && Svg ? [<Svg key={`div-${p.id}`} source={divider} alt="" width={lineW} height={1} />] : []
           const w = where(p)
           const pct = p.state === 'done' ? 100 : Math.round((Math.min(w.pos, w.total) / Math.max(1, w.total)) * 100)
           const color = STATE_COLOR[p.state]
@@ -1377,9 +1385,8 @@ export const register: Register = on => {
               </Box>
             </Box>,
           ]
-        })}
-        {[
-          ...(list.length > 0 && hasAway && Svg ? [<Svg key="div-away" source={divider} alt="" width={total} height={1} />] : []),
+        })
+    const awayRows = [
           // each other session as one bar row: its title is the button that switches to it
           ...shownAway.map(r => {
             const asState: PlanState = r.state === 'working' ? 'running' : r.state
@@ -1422,7 +1429,21 @@ export const register: Register = on => {
             )
           }),
           ...(away.rows.length > MAX_OTHERS ? [<Text key="away-more" dimColor>{`還有 ${away.rows.length - MAX_OTHERS} 個 session`}</Text>] : []),
-        ]}
+        ]
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        {isFramed
+          ? [
+              <Box key="own-frame" flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
+                {ownRows}
+              </Box>,
+              // the other sessions keep the frame's inset, without its line, so their bars stay under the framed ones
+              <Box key="away-list" flexDirection="column" gap={1} paddingX={e.surface === 'terminal' ? FRAME_INSET + 1 : FRAME_INSET}>
+                {awayRows}
+              </Box>,
+            ]
+          : [...ownRows, ...awayRows]}
       </Box>
     )
   })

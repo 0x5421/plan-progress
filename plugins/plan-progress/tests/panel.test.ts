@@ -755,3 +755,30 @@ test('a row with no bar shows its state where the bars start, as wide as a bar',
   expect(await above.find({ type: 'Text', text: '跑完了' })).toBeUndefined()
   await above.unmount()
 })
+
+for (const surface of ['desktop', 'terminal'] as const) {
+  test(`${surface}: with other sessions under them, this session's bars sit in a rounded frame; alone, no frame`, async ($, on) => {
+    engine(on, { clock: false })
+    const clock = mock.clock(on, { now: NOW })
+    const fs = hostFs(on)
+    await start($)
+    await $.tool.call({ tool: TOOL, id: 'mine', title: 'mine', stages: STAGES } as never)
+    const mount = () => $.ui.mount({ plugin: 'plan-progress', surface, component: 'AbovePrompt', props: ABOVE as never })
+    // alone: no frame
+    const alone = await mount()
+    expect(await alone.find({ key: 'own-frame' })).toBeUndefined()
+    await alone.unmount()
+    fs.put(sid(1), 'working', NOW - 10_000, { title: '機票天眼專案討論' })
+    await clock.advance(2000)
+    const both = await mount()
+    const frame = await both.find({ key: 'own-frame' })
+    expect(frame?.props.borderStyle).toBe('round')
+    // the frame holds this session's bar and not the other session's row
+    expect(JSON.stringify(frame)).toContain('title-mine')
+    expect(JSON.stringify(frame)).not.toContain(`switch-${sid(1)}`)
+    const list = await both.find({ key: 'away-list' })
+    expect(JSON.stringify(list)).toContain(`switch-${sid(1)}`)
+    expect(list?.props.paddingX).toBe(surface === 'terminal' ? 2 : 1)
+    await both.unmount()
+  })
+}
