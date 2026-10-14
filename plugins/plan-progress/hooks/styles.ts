@@ -1,15 +1,16 @@
 import type { AgentRun, Plan, PlanState, StepStatus } from '../types'
 
 // the bar styles a person can switch between with /progress-style; 'original' is the author's pixel bar in register.tsx
-export const STYLE_IDS = ['segments', 'hairline', 'beads', 'ledger', 'transit', 'original'] as const
+export const STYLE_IDS = ['segments', 'hairline', 'beads', 'ledger', 'transit', 'grid', 'original'] as const
 export type StyleId = (typeof STYLE_IDS)[number]
 export const DEFAULT_STYLE: StyleId = 'segments'
 export const STYLE_INFO: Record<StyleId, string> = {
-  segments: '分段：一個階段一格，所有階段名都看得到（陶土橘）',
+  segments: '分段：一個階段一格，現在這段最顯眼、做完的變淡（陶土橘）',
   hairline: '細線：2px 細線＋會呼吸的線頭，平常黑白，右邊顯示經過時間',
   beads: '串珠：一步一顆珠子，同階段用線串起來（藍）',
   ledger: '刻度字：等寬字＋小方格，像終端機游標，只有要注意時才有顏色',
   transit: '路線圖：像捷運圖，站名在下方，比其他版本高一點（紫）',
+  grid: '點陣：一步一個小方格，階段之間空一格，步驟多也排得下（青）',
   original: '原版：作者的像素顆粒進度條',
 }
 export const isStyleId = (v: unknown): v is StyleId => typeof v === 'string' && (STYLE_IDS as readonly string[]).includes(v)
@@ -24,10 +25,10 @@ export type BarStyle = {
 }
 
 // colours live in CSS variables so one drawing follows the app's light or dark scheme
-const PALETTE = `<style>svg{--ink:#1F1E1C;--muted:#73726C;--track:rgba(31,30,28,.08);--faint:rgba(31,30,28,.24);--panel:#F0EEE6;--on:#FFFBF7;--amber:#B26F12;--red:#C93C3C;--green:#2E8655;--clay:#C6613F;--blue:#3D6FD6;--violet:#6B5BD2}
-@media (prefers-color-scheme:dark){svg{--ink:#F2F0EA;--muted:#A3A19A;--track:rgba(242,240,234,.10);--faint:rgba(242,240,234,.30);--panel:#2A2927;--on:#1F1E1C;--amber:#E2A64B;--red:#F07272;--green:#5FC58D;--clay:#E08A6A;--blue:#86A8F2;--violet:#A99CF6}}</style>`
+const PALETTE = `<style>svg{--ink:#1F1E1C;--muted:#73726C;--track:rgba(31,30,28,.08);--faint:rgba(31,30,28,.24);--panel:#F0EEE6;--on:#FFFBF7;--amber:#B26F12;--red:#C93C3C;--green:#2E8655;--clay:#C6613F;--blue:#3D6FD6;--violet:#6B5BD2;--clayS:#A9502F;--greenS:#256F46;--teal:#0E8A8F}
+@media (prefers-color-scheme:dark){svg{--ink:#F2F0EA;--muted:#A3A19A;--track:rgba(242,240,234,.10);--faint:rgba(242,240,234,.30);--panel:#2A2927;--on:#1F1E1C;--amber:#E2A64B;--red:#F07272;--green:#5FC58D;--clay:#E08A6A;--blue:#86A8F2;--violet:#A99CF6;--clayS:#E08A6A;--greenS:#5FC58D;--teal:#4FC3C7}}</style>`
 // the glyph left of the title is a Text colour, one hex for both schemes
-const GLYPH_COLOR = { clay: '#D97757', blue: '#5B85E8', violet: '#8B7CF6', needs_input: '#E09A1E', error: '#E5484D', done: '#30A46C' }
+const GLYPH_COLOR = { clay: '#D97757', blue: '#5B85E8', violet: '#8B7CF6', teal: '#14A3A8', needs_input: '#E09A1E', error: '#E5484D', done: '#30A46C' }
 const SANS = "'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif"
 const MONO = "ui-monospace,'SF Mono',Menlo,monospace"
 
@@ -130,54 +131,90 @@ function withStrips(body: string, trackH: number, W: number, now: number, v: Vis
 }
 
 // ---------- segments: one cell per stage, every stage name visible ----------
+// the current stage is the loudest cell; finished ones fade to a tint. When the plan waits on the person or fails,
+// only the step at fault takes the amber or red, so it stands out from the clay. A stage too narrow for its name
+// shrinks to a thin bar, and the count lives only right of the bar
 
 const segments: BarStyle = {
   glyph: p => glyphFor(p, GLYPH_COLOR.clay),
   right: stepCount,
   draw(p, W, now, agents) {
     const H = 22
-    const gap = 3
-    const total = Math.max(1, p.stages.reduce((a, s) => a + s.steps.length, 0))
-    const avail = W - gap * (p.stages.length - 1)
-    const sc = stateVar(p.state, 'var(--clay)')
+    const gap = 2
+    const px = 11.5
+    const n = Math.max(1, p.stages.length)
+    const allDone = p.state === 'done'
+    const w = where(p)
+    const cs = allDone ? -1 : w.stage
+    const avail = W - gap * (n - 1)
+    // each stage's width follows its step count; the current one is widened to fit its name when it can be
+    const steps = p.stages.map(s => Math.max(1, s.steps.length))
+    const sum = steps.reduce((a, b) => a + b, 0)
+    let widths = steps.map(k => (avail * k) / sum)
+    const curName = p.stages[cs]?.name ?? ''
+    const curMin = textWidth(curName, px) + 18
+    if (cs >= 0 && (widths[cs] ?? 0) < curMin && avail - curMin > (n - 1) * 8) {
+      const rest = sum - (steps[cs] ?? 0)
+      widths = steps.map((k, i) => (i === cs ? curMin : ((avail - curMin) * k) / Math.max(1, rest)))
+    }
+    // the solid fills behind white letters are a shade deeper in the light scheme, so the letters stay readable
+    const solid = allDone ? 'var(--greenS)' : 'var(--clayS)'
+    const fault = p.state === 'needs_input' ? 'var(--amber)' : p.state === 'error' ? 'var(--red)' : null
     let x = 0
-    let defs = `<linearGradient id="sweep" x1="0" x2="1"><stop offset="0" style="stop-color:${sc};stop-opacity:0"/><stop offset=".6" style="stop-color:${sc};stop-opacity:.55"/><stop offset="1" style="stop-color:${sc};stop-opacity:0"/></linearGradient>`
+    let defs = `<linearGradient id="sweep" x1="0" x2="1"><stop offset="0" style="stop-color:var(--clayS);stop-opacity:0"/><stop offset=".6" style="stop-color:var(--clayS);stop-opacity:.55"/><stop offset="1" style="stop-color:var(--clayS);stop-opacity:0"/></linearGradient>`
     let out = ''
     p.stages.forEach((s, i) => {
-      const w = (avail * s.steps.length) / total
+      const sw = widths[i] ?? 0
+      const k = Math.max(1, s.steps.length)
+      const stepW = sw / k
       const doneN = s.steps.filter(t => fin(t.status)).length
-      const isDone = doneN === s.steps.length
-      const curIdx = s.steps.findIndex(t => t.status === 'active' || t.status === 'error')
-      const isCur = curIdx >= 0
-      const c = p.state === 'done' ? 'var(--green)' : isCur ? sc : 'var(--clay)'
-      const sw = w / s.steps.length
-      defs += `<clipPath id="s${i}"><rect x="${n1(x)}" y="0" width="${n1(w)}" height="${H}" rx="6"/></clipPath><clipPath id="f${i}"><rect x="${n1(x)}" y="0" width="${n1(isDone ? w : sw * doneN)}" height="${H}"/></clipPath>`
-      let g = `<rect x="${n1(x)}" y="0" width="${n1(w)}" height="${H}" ${fill(isDone ? c : 'var(--track)')}/>`
-      if (!isDone) {
-        if (isCur || doneN) g += `<rect x="${n1(x)}" y="0" width="${n1(w)}" height="${H}" ${fill(c, 0.13)}/><rect x="${n1(x)}" y="0" width="${n1(sw * doneN)}" height="${H}" ${fill(c)}/>`
-        if (isCur) {
-          const ax = x + sw * curIdx
-          if (p.state === 'running') {
-            const bw = Math.max(16, sw * 0.7)
-            defs += `<clipPath id="a${i}"><rect x="${n1(ax)}" y="0" width="${n1(sw)}" height="${H}"/></clipPath>`
-            g += `<rect x="${n1(ax)}" y="0" width="${n1(sw)}" height="${H}" ${fill(c, 0.14)}/>`
-            g += `<g clip-path="url(#a${i})"><rect x="${n1(ax - bw)}" y="0" width="${n1(bw)}" height="${H}" fill="url(#sweep)"><animate attributeName="x" from="${n1(ax - bw)}" to="${n1(ax + sw)}" dur="1.6s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines=".25 .1 .25 1"/></rect></g>`
+      const isCur = i === cs
+      const isDone = allDone || (!isCur && doneN === s.steps.length && s.steps.length > 0)
+      let label = fit(s.name, px, sw - 16)
+      // a stage with no room for its name is a thin bar, not an empty cell
+      const isThin = !isCur && !allDone && (label === '' || label.length < Math.min(3, s.name.length))
+      if (isThin) label = ''
+      const y = isThin ? 8 : 0
+      const h = isThin ? 6 : H
+      let g = `<rect x="${n1(x)}" y="${y}" width="${n1(sw)}" height="${h}" ${fill('var(--track)')}/>`
+      let onSolid = 0
+      if (allDone) {
+        g += `<rect x="${n1(x)}" y="0" width="${n1(sw)}" height="${H}" ${fill(solid)}/>`
+        onSolid = sw
+      } else if (isDone) {
+        g += `<rect x="${n1(x)}" y="${y}" width="${n1(sw)}" height="${h}" ${fill(fault ? 'var(--ink)' : 'var(--clayS)', fault ? 0.12 : 0.26)}/>`
+      } else if (isCur) {
+        const curIdx = s.steps.findIndex(t => !fin(t.status))
+        const ax = x + stepW * Math.max(0, curIdx)
+        g += `<rect x="${n1(x)}" y="0" width="${n1(sw)}" height="${H}" ${fill(fault ?? 'var(--clayS)', 0.14)}/>`
+        if (doneN) g += `<rect x="${n1(x)}" y="0" width="${n1(stepW * doneN)}" height="${H}" ${fill(fault ? 'var(--ink)' : 'var(--clayS)', fault ? 0.22 : 1)}/>`
+        if (!fault) onSolid = stepW * doneN
+        if (curIdx >= 0) {
+          if (fault) {
+            g += `<rect x="${n1(ax)}" y="0" width="${n1(stepW)}" height="${H}" ${fill(fault, 0.55)}>${p.state === 'needs_input' ? '<animate attributeName="fill-opacity" values=".55;.25;.55" dur="1.8s" repeatCount="indefinite"/>' : ''}</rect>`
           } else {
-            g += `<rect x="${n1(ax)}" y="0" width="${n1(sw)}" height="${H}" ${fill(c, 0.5)}>${p.state === 'needs_input' ? '<animate attributeName="fill-opacity" values=".5;.2;.5" dur="1.8s" repeatCount="indefinite"/>' : ''}</rect>`
+            const bw = Math.max(16, stepW * 0.7)
+            defs += `<clipPath id="a${i}"><rect x="${n1(ax)}" y="0" width="${n1(stepW)}" height="${H}"/></clipPath>`
+            g += `<rect x="${n1(ax)}" y="0" width="${n1(stepW)}" height="${H}" ${fill('var(--clayS)', 0.16)}/>`
+            g += `<g clip-path="url(#a${i})"><rect x="${n1(ax - bw)}" y="0" width="${n1(bw)}" height="${H}" fill="url(#sweep)"><animate attributeName="x" from="${n1(ax - bw)}" to="${n1(ax + stepW)}" dur="1.6s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines=".25 .1 .25 1"/></rect></g>`
           }
         }
-        for (let j = doneN + 1; j < s.steps.length; j++) g += `<rect x="${n1(x + sw * j - 0.5)}" y="7" width="1" height="8" ${fill('var(--ink)', 0.16)}/>`
       }
-      const px = 11.5
-      let label = isCur ? `${s.name}  ${curIdx + 1}/${s.steps.length}` : s.name
-      if (textWidth(label, px) > w - 16) label = fit(s.name, px, w - 16)
-      const lbl = (c2: string) => (label ? `<text x="${n1(x + 8)}" y="15" font-family="${SANS}" font-size="${px}" font-weight="${isCur ? 600 : 500}" ${fill(c2)}>${esc(label)}</text>` : '')
-      g += lbl(isDone ? 'var(--on)' : isCur ? 'var(--ink)' : 'var(--muted)')
-      if (!isDone && doneN) g += `<g clip-path="url(#f${i})">${lbl('var(--on)')}</g>`
-      out += `<g clip-path="url(#s${i})">${g}</g>`
-      x += w + gap
+      if (label) {
+        const lbl = (c: string) => `<text x="${n1(x + 8)}" y="15" font-family="${SANS}" font-size="${px}" font-weight="${isCur ? 600 : 500}" ${fill(c)}>${esc(label)}</text>`
+        g += lbl(isCur ? 'var(--ink)' : 'var(--muted)')
+        // the part of the name over a solid fill turns light
+        if (onSolid > 0) {
+          defs += `<clipPath id="f${i}"><rect x="${n1(x)}" y="0" width="${n1(onSolid)}" height="${H}"/></clipPath>`
+          g += `<g clip-path="url(#f${i})">${lbl('var(--on)')}</g>`
+        }
+      }
+      out += g
+      x += sw + gap
     })
-    return withStrips(`<defs>${defs}</defs>${out}`, H, W, now, agents, { accent: 'var(--clay)', bg: true })
+    // one rounded outline for the whole bar, so the cells read as one bar, not a row of buttons
+    defs += `<clipPath id="bar"><rect x="0" y="0" width="${n1(Math.max(0, x - gap))}" height="${H}" rx="6"/></clipPath>`
+    return withStrips(`<defs>${defs}</defs><g clip-path="url(#bar)">${out}</g>`, H, W, now, agents, { accent: 'var(--clay)', bg: true })
   },
 }
 
@@ -372,4 +409,56 @@ const transit: BarStyle = {
   },
 }
 
-export const STYLES: Record<Exclude<StyleId, 'original'>, BarStyle> = { segments, hairline, beads, ledger, transit }
+// ---------- grid: one small square per step, two to a column, a stage's squares set apart ----------
+
+const grid: BarStyle = {
+  glyph: p => glyphFor(p, GLYPH_COLOR.teal),
+  right: stepCount,
+  draw(p, W, now, agents) {
+    const H = 22
+    const w = where(p)
+    const done = p.state === 'done'
+    const acc = done ? 'var(--green)' : 'var(--teal)'
+    // squares shrink when a long plan would take more than half the bar
+    let cell = 7
+    let cg = 2
+    let sgap = 7
+    const cols = (k: number) => Math.ceil(Math.max(1, k) / 2)
+    const need = () => p.stages.reduce((a, s) => a + cols(s.steps.length) * (cell + cg) - cg, 0) + (p.stages.length - 1) * sgap
+    while (need() > W * 0.5 && cell > 4) {
+      cell -= 1
+      cg = Math.max(1, cg - 0.5)
+      sgap = Math.max(4, sgap - 1)
+    }
+    const top = (H - (cell * 2 + cg)) / 2
+    let x = 0
+    let out = ''
+    for (const s of p.stages) {
+      s.steps.forEach((st, j) => {
+        const cx = n1(x + Math.floor(j / 2) * (cell + cg))
+        // a column holding one square, the last of an odd stage, puts it at the middle
+        const isAlone = j % 2 === 0 && j === s.steps.length - 1
+        const cy = n1(isAlone ? (H - cell) / 2 : top + (j % 2) * (cell + cg))
+        const box = `x="${cx}" y="${cy}" width="${cell}" height="${cell}" rx="${cell > 5 ? 1.5 : 1}"`
+        if (st.status === 'done') out += `<rect ${box} ${fill(acc)}/>`
+        else if (st.status === 'skipped') out += `<rect ${box} ${fill(acc, 0.4)}/>`
+        else if (st.status === 'error') out += `<rect ${box} ${fill('var(--red)')}/>`
+        else if (st.status === 'active') {
+          const c = p.state === 'needs_input' ? 'var(--amber)' : acc
+          out += `<rect ${box} ${fill(c)}><animate attributeName="fill-opacity" values="1;.3;1" dur="${p.state === 'needs_input' ? 1.8 : 1.2}s" repeatCount="indefinite"/></rect>`
+        } else out += `<rect x="${n1(Number(cx) + 0.5)}" y="${n1(Number(cy) + 0.5)}" width="${cell - 1}" height="${cell - 1}" rx="${cell > 5 ? 1.2 : 0.8}" style="fill:none;stroke:var(--faint);stroke-width:1"/>`
+      })
+      x += cols(s.steps.length) * (cell + cg) - cg + sgap
+    }
+    const lx = x - sgap + 12
+    const sName = done ? 'Done' : (p.stages[w.stage]?.name ?? '')
+    const stepT = done ? '' : (p.state !== 'running' && p.note) || w.title
+    const room = W - lx
+    const nW = textWidth(sName, 12) * 1.05
+    const sT = fit(stepT, 12, room - nW - 22)
+    if (room > nW) out += `<text x="${n1(lx)}" y="15" font-family="${SANS}" font-size="12"><tspan font-weight="500" ${fill(done ? 'var(--green)' : 'var(--ink)')}>${esc(sName)}</tspan>${sT ? `<tspan dx="6" ${fill('var(--muted)')}>· ${esc(sT)}</tspan>` : ''}</text>`
+    return withStrips(out, H, W, now, agents, { accent: 'var(--teal)', bg: false })
+  },
+}
+
+export const STYLES: Record<Exclude<StyleId, 'original'>, BarStyle> = { segments, hairline, beads, ledger, transit, grid }

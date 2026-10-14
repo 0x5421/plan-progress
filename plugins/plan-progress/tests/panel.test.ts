@@ -43,7 +43,7 @@ function engine(on: any, opts: { clock?: boolean; saved?: Record<string, unknown
   return { store, closed, opened, toasts, played }
 }
 const PANE = 'plan-progress-styles'
-const STYLES = ['segments', 'hairline', 'beads', 'ledger', 'transit', 'original']
+const STYLES = ['segments', 'hairline', 'beads', 'ledger', 'transit', 'grid', 'original']
 
 for (const surface of ['desktop', 'terminal'] as const) {
   test(`${surface}: the footer draws one ⚙ button, which opens the style pane`, async ($, on) => {
@@ -844,4 +844,53 @@ test('a running session with no bar shows a sweeping track, what it does now and
   await clock.advance(1000)
   expect(JSON.stringify(await above.drawn())).toContain('"2m 17s"')
   await above.unmount()
+})
+
+// ---------- the drawings themselves ----------
+import { STYLES as LOOKS } from '../hooks/styles'
+const st = (status: string) => ({ title: 's', status, substeps: [] })
+const planOf = (state: string, stages: { name: string; steps: string[] }[]) =>
+  ({ id: 'p', title: 'p', kind: 'plan', state, note: null, startedAt: NOW, stages: stages.map(s => ({ name: s.name, steps: s.steps.map(st) })) }) as never
+const MID = [
+  { name: 'Research', steps: ['done', 'done'] },
+  { name: 'Build', steps: ['done', 'active', 'pending'] },
+  { name: 'Verify', steps: ['pending', 'pending'] },
+]
+
+test('segments: the current stage is solid, finished ones a tint; no step ticks and no count inside the bar', () => {
+  const svg = LOOKS.segments.draw(planOf('running', MID), 520, NOW, null).svg
+  // Research is finished: a tint, not a solid cell
+  expect(svg).toContain('fill:var(--clayS);fill-opacity:0.26')
+  // Build's finished step is solid, with its name turning light over it
+  expect(svg).toContain('fill:var(--clayS);fill-opacity:1"')
+  expect(svg).toContain('fill:var(--on)')
+  expect(svg).not.toMatch(/height="8" style="fill:var\(--ink\)/)
+  expect(svg).not.toContain('Build  2/3')
+  // one rounded outline for the whole bar
+  expect(svg).toContain('<g clip-path="url(#bar)">')
+})
+
+test('segments: waiting on the person, only the step at fault is amber and finished stages go grey', () => {
+  const svg = LOOKS.segments.draw(planOf('needs_input', MID), 520, NOW, null).svg
+  expect(svg).toContain('fill:var(--amber);fill-opacity:0.55')
+  expect(svg).toContain('fill:var(--ink);fill-opacity:0.12')
+  expect(svg).not.toContain('fill:var(--clayS);fill-opacity:1"')
+})
+
+test('segments: a stage too narrow for its name is a thin bar; the current one keeps its name', () => {
+  const many = ['Research', 'Design', 'Build', 'Verify', 'Ship', 'Docs'].map((name, i) => ({ name, steps: i < 2 ? ['done'] : i === 2 ? ['active', 'pending', 'pending', 'pending'] : ['pending'] }))
+  const svg = LOOKS.segments.draw(planOf('running', many), 300, NOW, null).svg
+  expect(svg).toContain('height="6"')
+  expect(svg).toContain('>Build</text>')
+  expect(svg).not.toContain('>Ship</text>')
+})
+
+test('grid: one square per step, the active one blinks, a lone square sits at the middle', () => {
+  const svg = LOOKS.grid.draw(planOf('running', MID), 520, NOW, null).svg
+  expect((svg.match(/<rect /g) ?? []).length).toBe(7)
+  expect(svg).toContain('attributeName="fill-opacity"')
+  expect(svg).toContain('>Build</tspan>')
+  expect(LOOKS.grid.right(planOf('running', MID), NOW)).toBe('3/7')
+  // Build has three steps: its third sits alone in its column, at the middle (22 - 7) / 2
+  expect(svg).toContain('y="8.0" width="6" height="6"')
 })
