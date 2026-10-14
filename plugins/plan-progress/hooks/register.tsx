@@ -47,6 +47,8 @@ async function openStyles($: EngineInterface) {
 }
 // the gear that opens the pane; U+FE0E asks for the plain text glyph, not the colour emoji
 const SETTINGS_GLYPH = '⚙︎'
+// the column the gear takes at the band's right, in cells
+const GEAR_CELLS = 3
 
 // how subagent strips show under a bar: one strip each, one summary line, or none
 const AGENT_VIEWS = ['expanded', 'summary', 'hidden'] as const
@@ -1234,20 +1236,8 @@ export const register: Register = on => {
   // A Button: the desktop draws it with a native grey box, but its footer draws no Client
   // region and no pressable Markdown link (0.5.7-0.5.10), so a Button is the one control that works there;
   // one glyph keeps that box small and has no descender to clip
-  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
-    const { Box, Button } = $.ui.resolve(e)
-    // other mods add their labels to modes beneath us; keep them
-    const below = await next(e)
-
-    // a gap only when other labels follow: with none, it left the gear one cell further
-    // from the model name than the footer's own spacing
-    return (
-      <Box flexDirection="row" alignItems="center" gap={e.props.modes.length > 0 ? 1 : 0}>
-        <Button key="progress-style" plain dimColor label={SETTINGS_GLYPH} onPress={() => openStyles($)} />
-        {below}
-      </Box>
-    )
-  })
+  // the gear lives in the band above the prompt, not the footer: the desktop app (2.37337) gives a plugin's footer
+  // labels a row of their own, a whole row for one glyph. Without bars the band is empty and /progress-style opens the pane
 
   // four settings, each a press away: whether the bars show, whether sounds play, how subagents show,
   // then one bordered tile per style with its preview
@@ -1414,7 +1404,7 @@ export const register: Register = on => {
     const t = $.ui.resolve(e)
     const { Box, Button, Text } = t
     const Svg = 'Svg' in t ? t.Svg : null
-    const total = Math.max(320, (e.props.bodyColumns || 100) * 8)
+    const total = Math.max(320, ((e.props.bodyColumns || 100) - GEAR_CELLS) * 8)
     // every bar has the same width and is pinned to the right edge (fixed-width percent, close button),
     // so rows line up whatever their titles; the slack goes into the gap after the title.
     // Desktop reports ~8 CSS px per column; glyph, gaps, percent and the close button take ~126 px.
@@ -1556,8 +1546,10 @@ export const register: Register = on => {
           ...(away.rows.length > MAX_OTHERS ? [<Text key="away-more" dimColor>{`還有 ${away.rows.length - MAX_OTHERS} 個 session`}</Text>] : []),
         ]
 
+    // the rows, and the gear at the top right in a column of its own beside them, so it takes no row
     return (
-      <Box flexDirection="column" gap={1}>
+      <Box flexDirection="row" alignItems="flex-start">
+      <Box flexDirection="column" gap={1} flexGrow={1}>
         {isFramed
           ? [
               <Box key="own-frame" flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
@@ -1578,6 +1570,10 @@ export const register: Register = on => {
               </Box>,
             ]
           : [...ownRows, ...awayRows]}
+      </Box>
+      <Box key="band-gear" width={GEAR_CELLS} justifyContent="flex-end">
+        <Button key="progress-style" plain dimColor label={SETTINGS_GLYPH} onPress={() => openStyles($)} />
+      </Box>
       </Box>
     )
   })

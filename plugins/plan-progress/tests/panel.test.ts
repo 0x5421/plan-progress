@@ -46,19 +46,20 @@ const PANE = 'plan-progress-styles'
 const STYLES = ['segments', 'hairline', 'beads', 'ledger', 'transit', 'grid', 'original']
 
 for (const surface of ['desktop', 'terminal'] as const) {
-  test(`${surface}: the footer draws one ⚙ button, which opens the style pane`, async ($, on) => {
+  test(`${surface}: the gear sits at the band's top right, not in the footer, and opens the style pane`, async ($, on) => {
     const host = engine(on)
-    const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'SessionMode', props: { modes: [] } as never })
-    // the desktop footer draws no Client region (0.5.7-0.5.9 showed nothing there), so it stays a Button;
-    // one glyph keeps the desktop's grey box small
-    expect(await ui.findAll({ type: 'Client' })).toHaveLength(0)
-    expect(await ui.findAll({ type: 'Button' })).toHaveLength(1)
-    expect((await ui.find({ key: 'progress-style' }))?.text).toBe('\u2699\uFE0E')
-    // no labels after the gear: no gap, so it sits as far from the model name as the footer's own items
-    expect((await ui.drawn()).props.gap).toBe(0)
-    const withModes = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'SessionMode', props: { modes: ['focus'] } as never })
-    expect((await withModes.drawn()).props.gap).toBe(1)
-    await ui.press({ key: 'progress-style' })
+    // the desktop app (2.37337) gives a plugin's footer labels a row of their own: the footer draws no gear
+    const footer = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'SessionMode', props: { modes: [] } as never })
+    expect(await footer.find({ key: 'progress-style' })).toBeUndefined()
+    await $.command.run({ command: 'progress-demo' })
+    const props = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120, scroll: SCROLL }
+    const above = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'AbovePrompt', props: props as never })
+    // its own column beside the rows, at the top, so it takes no row of height
+    const column = await above.find({ key: 'band-gear' })
+    expect(column?.props.width).toBe(3)
+    expect((await above.drawn()).props.flexDirection).toBe('row')
+    expect((await above.find({ key: 'progress-style' }))?.text).toBe('\u2699\uFE0E')
+    await above.press({ key: 'progress-style' })
     expect(host.opened).toEqual([PANE])
   })
 
@@ -572,7 +573,7 @@ test('rows line up: titles are all plain buttons, the text right of the bars sit
   expect(own?.text).toBe(fits)
   expect((await above.find({ key: 'title-long' }))?.text).toMatch(/…$/)
   // 0% beside 100%: the column is as wide as the widest text plus one cell, in every row
-  const cols = (await above.findAll({ type: 'Box' })).filter((el: any) => el.props.justifyContent === 'flex-end')
+  const cols = (await above.findAll({ type: 'Box' })).filter((el: any) => el.props.justifyContent === 'flex-end' && el.props.key !== 'band-gear')
   expect(cols.length).toBe(3)
   expect(new Set(cols.map((el: any) => el.props.width))).toEqual(new Set([5]))
   await above.unmount()
