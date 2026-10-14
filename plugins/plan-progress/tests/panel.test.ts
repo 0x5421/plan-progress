@@ -861,9 +861,13 @@ test('segments: the current stage is solid, finished ones a tint; no step ticks 
   const svg = LOOKS.segments.draw(planOf('running', MID), 520, NOW, null).svg
   // Research is finished: a tint, not a solid cell
   expect(svg).toContain('fill:var(--clayS);fill-opacity:0.26')
-  // Build's finished step is solid, with its name turning light over it
-  expect(svg).toContain('fill:var(--clayS);fill-opacity:1"')
-  expect(svg).toContain('fill:var(--on)')
+  // Build is one fade with no hard edge: solid over its finished step, then through the active one to a tint,
+  // its middle breathing on an eased curve; the name turns light over the solid part through the same fade
+  expect(svg).toContain('<rect x="149.4" y="0" width="221.1" height="22" fill="url(#g1)"/>')
+  expect(svg).toContain('style="stop-color:var(--clayS)" stop-opacity="1"')
+  expect(svg).toMatch(/<animate attributeName="stop-opacity" values="0.7;0.35;0.7" keyTimes="0;.5;1" calcMode="spline"/)
+  expect(svg).toContain('fill="url(#t1)"')
+  expect(svg).not.toContain('url(#sweep)')
   expect(svg).not.toMatch(/height="8" style="fill:var\(--ink\)/)
   expect(svg).not.toContain('Build  2/3')
   // one rounded outline for the whole bar
@@ -872,9 +876,10 @@ test('segments: the current stage is solid, finished ones a tint; no step ticks 
 
 test('segments: waiting on the person, only the step at fault is amber and finished stages go grey', () => {
   const svg = LOOKS.segments.draw(planOf('needs_input', MID), 520, NOW, null).svg
-  expect(svg).toContain('fill:var(--amber);fill-opacity:0.55')
+  expect(svg).toContain('style="stop-color:var(--amber)" stop-opacity="0.6"')
+  expect(svg).toContain('style="stop-color:var(--ink)" stop-opacity="0.22"')
   expect(svg).toContain('fill:var(--ink);fill-opacity:0.12')
-  expect(svg).not.toContain('fill:var(--clayS);fill-opacity:1"')
+  expect(svg).not.toContain('var(--clayS)')
 })
 
 test('segments: a stage too narrow for its name is a thin bar; the current one keeps its name', () => {
@@ -893,4 +898,12 @@ test('grid: one square per step, the active one blinks, a lone square sits at th
   expect(LOOKS.grid.right(planOf('running', MID), NOW)).toBe('3/7')
   // Build has three steps: its third sits alone in its column, at the middle (22 - 7) / 2
   expect(svg).toContain('y="8.0" width="6" height="6"')
+})
+
+test('segments: a stage on its first step has no solid head, so a dark name never sits on a dark fill', () => {
+  const first = [{ name: 'Research', steps: ['done'] }, { name: 'Build', steps: ['active', 'pending'] }]
+  const svg = LOOKS.segments.draw(planOf('running', first), 520, NOW, null).svg
+  const fade = /<linearGradient id="g1".*?<\/linearGradient>/.exec(svg)?.[0] ?? ''
+  expect(fade).not.toContain('stop-opacity="1"')
+  expect(svg).not.toContain('fill="url(#t1)"')
 })

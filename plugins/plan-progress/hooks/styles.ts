@@ -161,7 +161,7 @@ const segments: BarStyle = {
     const solid = allDone ? 'var(--greenS)' : 'var(--clayS)'
     const fault = p.state === 'needs_input' ? 'var(--amber)' : p.state === 'error' ? 'var(--red)' : null
     let x = 0
-    let defs = `<linearGradient id="sweep" x1="0" x2="1"><stop offset="0" style="stop-color:var(--clayS);stop-opacity:0"/><stop offset=".6" style="stop-color:var(--clayS);stop-opacity:.55"/><stop offset="1" style="stop-color:var(--clayS);stop-opacity:0"/></linearGradient>`
+    let defs = ''
     let out = ''
     p.stages.forEach((s, i) => {
       const sw = widths[i] ?? 0
@@ -177,38 +177,40 @@ const segments: BarStyle = {
       const y = isThin ? 8 : 0
       const h = isThin ? 6 : H
       let g = `<rect x="${n1(x)}" y="${y}" width="${n1(sw)}" height="${h}" ${fill('var(--track)')}/>`
-      let onSolid = 0
+      let labelFill: string | null = null
       if (allDone) {
         g += `<rect x="${n1(x)}" y="0" width="${n1(sw)}" height="${H}" ${fill(solid)}/>`
-        onSolid = sw
       } else if (isDone) {
         g += `<rect x="${n1(x)}" y="${y}" width="${n1(sw)}" height="${h}" ${fill(fault ? 'var(--ink)' : 'var(--clayS)', fault ? 0.12 : 0.26)}/>`
       } else if (isCur) {
-        const curIdx = s.steps.findIndex(t => !fin(t.status))
-        const ax = x + stepW * Math.max(0, curIdx)
-        g += `<rect x="${n1(x)}" y="0" width="${n1(sw)}" height="${H}" ${fill(fault ?? 'var(--clayS)', 0.14)}/>`
-        if (doneN) g += `<rect x="${n1(x)}" y="0" width="${n1(stepW * doneN)}" height="${H}" ${fill(fault ? 'var(--ink)' : 'var(--clayS)', fault ? 0.22 : 1)}/>`
-        if (!fault) onSolid = stepW * doneN
-        if (curIdx >= 0) {
-          if (fault) {
-            g += `<rect x="${n1(ax)}" y="0" width="${n1(stepW)}" height="${H}" ${fill(fault, 0.55)}>${p.state === 'needs_input' ? '<animate attributeName="fill-opacity" values=".55;.25;.55" dur="1.8s" repeatCount="indefinite"/>' : ''}</rect>`
-          } else {
-            const bw = Math.max(16, stepW * 0.7)
-            defs += `<clipPath id="a${i}"><rect x="${n1(ax)}" y="0" width="${n1(stepW)}" height="${H}"/></clipPath>`
-            g += `<rect x="${n1(ax)}" y="0" width="${n1(stepW)}" height="${H}" ${fill('var(--clayS)', 0.16)}/>`
-            g += `<g clip-path="url(#a${i})"><rect x="${n1(ax - bw)}" y="0" width="${n1(bw)}" height="${H}" fill="url(#sweep)"><animate attributeName="x" from="${n1(ax - bw)}" to="${n1(ax + stepW)}" dur="1.6s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines=".25 .1 .25 1"/></rect></g>`
-          }
+        // one fill over the whole stage: solid over its finished steps, fading through the active one to a tint, so
+        // there is no hard edge where the finished part stops. The middle of the fade breathes, slowly, eased
+        const curIdx = Math.max(0, s.steps.findIndex(t => !fin(t.status)))
+        const at = (v: number) => n1(Math.min(100, Math.max(0, ((v - x) / Math.max(1, sw)) * 100)))
+        const d = x + stepW * curIdx
+        const m = d + stepW * 0.5
+        const e2 = d + stepW
+        const [head, headOp] = fault ? ['var(--ink)', 0.22] : ['var(--clayS)', 1]
+        const tone = fault ?? 'var(--clayS)'
+        const [lo, hi] = fault ? [0.25, 0.6] : [0.35, 0.7]
+        const breathe = `<animate attributeName="stop-opacity" values="${hi};${lo};${hi}" keyTimes="0;.5;1" calcMode="spline" keySplines=".45 0 .55 1;.45 0 .55 1" dur="2.4s" repeatCount="indefinite"/>`
+        const stop = (v: number, c: string, op: number, alive = false) => `<stop offset="${at(v)}%" style="stop-color:${c}" stop-opacity="${op}">${alive ? breathe : ''}</stop>`
+        // nothing finished yet in this stage: no solid head, the fade starts at its left edge
+        const headStops = curIdx > 0 ? stop(x, head, headOp) + stop(d, head, headOp) : ''
+        // running: the solid part fades out through the active step. Waiting or failed: the active step is one soft
+        // band of amber or red between the grey finished part and the tint
+        const bodyStops = fault
+          ? stop(d + stepW * 0.3, tone, hi, true) + stop(e2 - stepW * 0.2, tone, hi, true) + stop(Math.min(x + sw, e2 + stepW * 0.3), tone, 0.14)
+          : stop(curIdx > 0 ? m : x, tone, hi, true) + stop(e2, tone, 0.14)
+        defs += `<linearGradient id="g${i}" gradientUnits="userSpaceOnUse" x1="${n1(x)}" x2="${n1(x + sw)}" y1="0" y2="0">${headStops}${bodyStops}${stop(x + sw, tone, 0.14)}</linearGradient>`
+        g += `<rect x="${n1(x)}" y="0" width="${n1(sw)}" height="${H}" fill="url(#g${i})"/>`
+        // the name turns light over the solid part and back to ink through the same fade
+        if (!fault && curIdx > 0) {
+          defs += `<linearGradient id="t${i}" gradientUnits="userSpaceOnUse" x1="${n1(x)}" x2="${n1(x + sw)}" y1="0" y2="0"><stop offset="${at(d)}%" style="stop-color:var(--on)"/><stop offset="${at(m)}%" style="stop-color:var(--ink)"/></linearGradient>`
+          labelFill = `fill="url(#t${i})"`
         }
       }
-      if (label) {
-        const lbl = (c: string) => `<text x="${n1(x + 8)}" y="15" font-family="${SANS}" font-size="${px}" font-weight="${isCur ? 600 : 500}" ${fill(c)}>${esc(label)}</text>`
-        g += lbl(isCur ? 'var(--ink)' : 'var(--muted)')
-        // the part of the name over a solid fill turns light
-        if (onSolid > 0) {
-          defs += `<clipPath id="f${i}"><rect x="${n1(x)}" y="0" width="${n1(onSolid)}" height="${H}"/></clipPath>`
-          g += `<g clip-path="url(#f${i})">${lbl('var(--on)')}</g>`
-        }
-      }
+      if (label) g += `<text x="${n1(x + 8)}" y="15" font-family="${SANS}" font-size="${px}" font-weight="${isCur ? 600 : 500}" ${labelFill ?? fill(allDone ? 'var(--on)' : isCur ? 'var(--ink)' : 'var(--muted)')}>${esc(label)}</text>`
       out += g
       x += sw + gap
     })
