@@ -788,8 +788,8 @@ for (const surface of ['desktop', 'terminal'] as const) {
       // the desktop puts a Box one row up about 20 px above the line: the drawing is two rows tall, the name at its middle
       const svg = await both.find({ type: 'Svg', alt: '日曆實測＋行李公斤' })
       expect(svg?.props.height).toBe(40)
-      expect(String(svg?.props.source)).toContain('<rect class="b" y="12"')
-      expect(String(svg?.props.source)).toContain('<text x="6" y="24"')
+      expect(String(svg?.props.source)).toContain('<rect class="b" y="13"')
+      expect(String(svg?.props.source)).toContain('<text x="6" y="23.5"')
     }
     await both.unmount()
   })
