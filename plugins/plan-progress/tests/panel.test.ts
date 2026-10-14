@@ -68,7 +68,8 @@ for (const surface of ['desktop', 'terminal'] as const) {
     const props = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120, scroll: SCROLL }
     const bars = async () => {
       const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: props as never })
-      const n = (await above.findAll({ type: 'Svg' })).length
+      // the bars, not the state glyphs beside them (drawn with no alt)
+      const n = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '').length
       await above.unmount()
       return n
     }
@@ -153,7 +154,8 @@ test('desktop: every style tile and preview has one size, and switching subagent
     expect(tile).toBeDefined()
     expect(tile?.props.width).toBeUndefined()
   }
-  const previews = (await svgSizes()).slice(1)
+  // the colour row's dots are Svgs too: the style previews are the ones named "<style> preview"
+  const previews = (await ui.findAll({ type: 'Svg' })).filter(el => STYLES.some(id => el.props.alt === `${id} preview`)).map(el => `${el.props.width}x${el.props.height}`)
   expect(previews.length).toBe(STYLES.length)
   expect(new Set(previews).size).toBe(1)
   expect(previews[0]).not.toContain('undefined')
@@ -173,7 +175,7 @@ test('desktop: every style draws the bar above the prompt', async ($, on) => {
     const answer = await $.command.run({ command: 'progress-style', args: id })
     expect(JSON.stringify(answer)).toContain(id)
     const ui = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: props as never })
-    const svg = await ui.findAll({ type: 'Svg' })
+    const svg = (await ui.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '')
     expect(svg.length).toBe(1)
     // the ⚙ lives in the footer only, not on the bar row
     expect(await ui.find({ key: 'style-demo' })).toBeUndefined()
@@ -834,7 +836,7 @@ test('a running session with no bar shows a sweeping track, what it does now and
   // the words use the bars' note type, and the sweep and the dot take the style's running colour (segments: clay)
   expect(String(svgOf(1)?.props.source)).toContain('font:400 12px')
   expect(String(svgOf(1)?.props.source)).toContain('fill="#D97757"')
-  expect(JSON.stringify(await above.drawn())).toContain('"color":"#D97757"')
+  expect((await above.findAll({ type: 'Svg' })).some((el: any) => el.props.alt === '' && String(el.props.source).includes('fill="#D97757"'))).toBe(true)
   expect(String(svgOf(2)?.props.alt)).toBe('2-proj · task 2: 處理中')
   expect(String(svgOf(3)?.props.alt)).toBe('3-proj · task 3: 外部工具 · memelab')
   const tree = JSON.stringify(await above.drawn())
@@ -906,4 +908,89 @@ test('segments: a stage on its first step has no solid head, so a dark name neve
   const fade = /<linearGradient id="g1".*?<\/linearGradient>/.exec(svg)?.[0] ?? ''
   expect(fade).not.toContain('stop-opacity="1"')
   expect(svg).not.toContain('fill="url(#t1)"')
+})
+
+import { setAccent } from '../hooks/styles'
+const NARROW = ['Research', 'Design', 'Build', 'Verify', 'Ship', 'Docs'].map((name, i) => ({ name, steps: i < 2 ? ['done'] : i === 2 ? ['active', 'pending', 'pending', 'pending'] : ['pending'] }))
+
+test('transit: the train is a ring, not three dots; names carry no count and are never cut', () => {
+  const svg = LOOKS.transit.draw(planOf('running', MID), 520, NOW, null).svg
+  expect(svg).not.toMatch(/r="1.2" style="fill:var\(--on\)/)
+  expect(svg).toContain('>Build</text>')
+  expect(svg).not.toContain('Build 2/3')
+  const narrow = LOOKS.transit.draw(planOf('running', NARROW), 300, NOW, null).svg
+  expect(narrow).toContain('>Build</text>')
+  expect(narrow).not.toContain('…')
+  // a name that does not fit its stretch is left out, not drawn over its neighbours
+  expect(narrow).not.toContain('>Research</text>')
+})
+
+test('beads: on a narrow bar the stages stay at least 12 apart', () => {
+  const svg = LOOKS.beads.draw(planOf('running', NARROW), 160, NOW, null).svg
+  const xs = [...svg.matchAll(/<circle cx="([\d.]+)" cy="11"/g)].map(m => Number(m[1]))
+  // Research and Design are one bead each: their centres sit a stage gap apart
+  expect((xs[1] ?? 0) - (xs[0] ?? 0)).toBeGreaterThanOrEqual(18)
+})
+
+test('ledger: too narrow for every name, the current stage keeps its short one', () => {
+  const svg = LOOKS.ledger.draw(planOf('running', NARROW), 300, NOW, null).svg
+  expect(svg).toContain('>BUI</text>')
+  expect(svg).not.toContain('>RES</text>')
+})
+
+test('hairline: the count lives only in the right column; done shows the count there', () => {
+  const svg = LOOKS.hairline.draw(planOf('running', MID), 520, NOW, null).svg
+  expect(svg).not.toContain('>3/7<')
+  const done = planOf('done', MID.map(s => ({ ...s, steps: s.steps.map(() => 'done') })))
+  expect(LOOKS.hairline.right(done, NOW)).toBe('7/7')
+})
+
+test('a picked colour recolours every style, its glyph and the black-and-white styles moving point', () => {
+  setAccent('teal')
+  try {
+    expect(LOOKS.beads.draw(planOf('running', MID), 520, NOW, null).svg).toContain('--blue:#0E8A8F')
+    expect(LOOKS.segments.draw(planOf('running', MID), 520, NOW, null).svg).toContain('--clayS:#0B7378')
+    expect(LOOKS.beads.glyph(planOf('running', MID))?.color).toBe('#14A3A8')
+    // waiting keeps its amber
+    expect(LOOKS.beads.glyph(planOf('needs_input', MID))?.color).toBe('#E09A1E')
+    expect(LOOKS.hairline.draw(planOf('running', MID), 520, NOW, null).svg).toContain('var(--acc, var(--ink))')
+  } finally {
+    setAccent(null)
+  }
+  expect(LOOKS.beads.draw(planOf('running', MID), 520, NOW, null).svg).not.toContain('--acc:')
+})
+
+test('the pane picks a colour, saved, and the bars redraw in it', async ($, on) => {
+  const host = engine(on)
+  await $.command.run({ command: 'progress-demo' })
+  const props = { title: '進度條樣式', isFocused: true, bodyColumns: 50, placement: 'dock', scroll: SCROLL }
+  const ui = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'Pane', requestId: PANE, props: props as never })
+  expect((await ui.find({ key: 'use-accent-own' }))?.props.variant).toBe('primary')
+  await ui.press({ key: 'use-accent-pink' })
+  expect(host.store.get('accent')).toBe('pink')
+  expect((await ui.find({ key: 'use-accent-pink' }))?.props.variant).toBe('primary')
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  const bar = (await above.findAll({ type: 'Svg' })).find((el: any) => el.props.alt !== '')
+  expect(String(bar?.props.source)).toContain('--clay:#B83A78')
+  await above.unmount()
+  await ui.press({ key: 'use-accent-own' })
+  expect(host.store.get('accent')).toBe('')
+  await ui.unmount()
+})
+
+test('desktop: every state glyph is drawn in one width, so the titles after them start at one place', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  fs.put(sid(1), 'done', NOW - 60_000)
+  fs.put(sid(2), 'needs_input', NOW - 30_000)
+  fs.put(sid(3), 'working', NOW - 10_000)
+  await start($)
+  await $.tool.call({ tool: TOOL, id: 'mine', title: 'mine', stages: STAGES } as never)
+  await clock.advance(2000)
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  const glyphs = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt === '' && String(el.props.source).includes('width="12"'))
+  expect(glyphs.length).toBe(4)
+  expect(new Set(glyphs.map((el: any) => `${el.props.width}x${el.props.height}`)).size).toBe(1)
+  await above.unmount()
 })

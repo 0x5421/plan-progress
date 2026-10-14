@@ -55,6 +55,8 @@ declare module 'claude-code' {
       others: OthersView
       // whether those other sessions show above the prompt; also in $.store
       crossSessions: boolean
+      // the running colour picked in the pane, one of ACCENT_IDS in hooks/styles.ts, or '' for each style's own; also in $.store
+      accent: string
     }
   }
 }

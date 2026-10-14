@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRun, OtherSession, OthersView, Plan, PlanStage, PlanState, PlanStep, StepStatus } from '../types'
-import { DEFAULT_STYLE, STYLE_IDS, STYLE_INFO, STYLES, isStyleId } from './styles'
+import { ACCENT_IDS, ACCENT_INFO, DEFAULT_STYLE, STYLE_IDS, STYLE_INFO, STYLES, accentGlyph, isAccentId, isStyleId, setAccent } from './styles'
 import type { StyleId } from './styles'
 
 const TOOL = 'mcp__plan-progress__plan_progress'
@@ -62,6 +62,14 @@ const agentViewOf = async ($: EngineInterface): Promise<AgentView> => {
 const setAgentView = async ($: EngineInterface, v: AgentView) => {
   await update($, agentView, () => v)
   await $.store.set(AGENT_VIEW_STORE_KEY, v)
+}
+// the colour the bars run in, one of ACCENT_IDS, or '' for each style's own; the drawing module holds it too
+const accentChoice = atom({ plugin: 'plan-progress', key: 'accent' } as const, '' as string)
+const ACCENT_STORE_KEY = 'accent'
+const setAccentChoice = async ($: EngineInterface, v: string) => {
+  setAccent(v)
+  await update($, accentChoice, () => v)
+  await $.store.set(ACCENT_STORE_KEY, v)
 }
 const STRIP_H = 18
 const STRIP_GAP = 3
@@ -485,6 +493,21 @@ function stripsSvg(v: { shown: AgentRun[]; hidden: AgentRun[] }, W: number, now:
 
 function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? '' : 's'}`
+}
+
+// the state glyph left of a title, drawn in a box of one width with its mark at the middle: as letters, ● ? ! ✓
+// are each a different width, so the titles after them did not start at one place
+const GLYPH_W = 12
+const GLYPH_H = 16
+function glyphSvg(char: string, color: string, isDim = false) {
+  const c = GLYPH_W / 2
+  const mark =
+    char === '●'
+      ? `<circle cx="${c}" cy="${GLYPH_H / 2}" r="4.5" fill="${color}"/>`
+      : char === '✓'
+        ? `<path d="M${c - 4} ${GLYPH_H / 2}l2.8 2.9 5.2-5.6" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`
+        : `<text x="${c}" y="${GLYPH_H / 2 + 4.5}" text-anchor="middle" style="font:700 13px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,sans-serif" fill="${color}">${esc(char)}</text>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${GLYPH_W}" height="${GLYPH_H}" viewBox="0 0 ${GLYPH_W} ${GLYPH_H}"${isDim ? ' opacity=".45"' : ''}>${mark}</svg>`
 }
 
 // another session's state in words, for a row with no bar: left-aligned in the bar's own width, in the bars' note type (12 px, regular, muted)
@@ -1055,6 +1078,11 @@ export const register: Register = on => {
     if (isStyleId(saved)) await update($, barStyle, () => saved)
     const savedView = await $.store.get(AGENT_VIEW_STORE_KEY)
     if (isAgentView(savedView)) await update($, agentView, () => savedView)
+    const savedAccent = await $.store.get(ACCENT_STORE_KEY)
+    if (isAccentId(savedAccent)) {
+      setAccent(savedAccent)
+      await update($, accentChoice, () => savedAccent)
+    }
     const savedShown = await $.store.get(SHOWN_STORE_KEY)
     if (typeof savedShown === 'boolean') await update($, isOpen, () => savedShown)
     const savedSounds = await $.store.get(SOUNDS_STORE_KEY)
@@ -1212,6 +1240,7 @@ export const register: Register = on => {
     const Svg = 'Svg' in t ? t.Svg : null
     const current = await styleOf($)
     const view = await agentViewOf($)
+    const pickedAccent = await read($, accentChoice)
     const isShown = await read($, isOpen)
     const isSounding = await read($, soundsOn)
     const isCross = await read($, crossOn)
@@ -1297,6 +1326,28 @@ export const register: Register = on => {
           {Svg ? [<Svg key="agents-preview" source={agentsDrawn.svg} alt={`subagents ${view} preview`} width={W} height={agentsDrawn.height} />] : []}
         </Box>
 
+        {/* the running colour for every style: each choice a dot of its colour beside its name; the tiles below redraw in it */}
+        <Box flexDirection="column" gap={1}>
+          <Text bold>顏色</Text>
+          <Box key="accent-row" flexDirection="row" alignItems="center" gap={1} flexWrap="wrap">
+            {['', ...ACCENT_IDS].map(id => {
+              const isPicked = id === pickedAccent
+              const dot = id && isAccentId(id) ? ACCENT_INFO[id].glyph : null
+              return (
+                <Box key={`accent-${id || 'own'}`} flexDirection="row" alignItems="center" gap={1}>
+                  {dot && Svg ? [<Svg key="dot" source={`<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"><circle cx="6" cy="6" r="5" fill="${dot}"/></svg>`} alt="" width={12} height={12} />] : []}
+                  <Button
+                    key={`use-accent-${id || 'own'}`}
+                    variant={isPicked ? 'primary' : 'secondary'}
+                    label={id && isAccentId(id) ? ACCENT_INFO[id].name : '跟樣式預設'}
+                    onPress={() => (isPicked ? undefined : setAccentChoice($, id))}
+                  />
+                </Box>
+              )
+            })}
+          </Box>
+        </Box>
+
         {/* tiles name no width (a Box width counts cells, not pixels); the column stretches them all to the pane's width */}
         <Box key="style-list" flexDirection="column" alignItems="stretch" gap={1}>
           <Text bold>進度條樣式</Text>
@@ -1330,6 +1381,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    await read($, accentChoice)
     const list = await read($, plans)
     // other sessions that finished or wait on the person, under this session's own bars
     const away: OthersView = (await read($, crossOn)) ? await read($, others) : { rows: [] }
@@ -1366,6 +1418,15 @@ export const register: Register = on => {
     // with other sessions under it, this session's own bars sit in a rounded frame; every row gives up the frame's width
     // (its border and padding) so the bars inside and outside it still line up
     const isFramed = list.length > 0 && hasAway
+    // the desktop draws the glyph in a box of one width; a terminal's cells already line it up
+    const glyphCell = (gl: { char: string; color: string }, isDim?: boolean) =>
+      Svg && e.surface !== 'terminal' ? (
+        <Svg key="glyph" source={glyphSvg(gl.char, gl.color, isDim)} alt="" width={GLYPH_W} height={GLYPH_H} />
+      ) : (
+        <Text key="glyph" color={gl.color} dimColor={isDim}>
+          {gl.char}
+        </Text>
+      )
     const frameName = frameNameSvg(str(appTitle || '這個 session', 40))
     const frameSlack = isFramed ? FRAME_PX : 0
     const trackW = Math.max(120, Math.min(1400, total - titleWidth - 140 - frameSlack - (style === 'hairline' ? 18 : 0)))
@@ -1406,7 +1467,7 @@ export const register: Register = on => {
           return [
             ...line,
             <Box key={`bar-${p.id}`} flexDirection="row" alignItems={v || drawn.height > TRACK_H ? 'flex-start' : 'center'} gap={1}>
-              {glyph ? [<Text key="glyph" color={glyph.color} dimColor={isLeaving}>{glyph.char}</Text>] : []}
+              {glyph ? [glyphCell(glyph, isLeaving)] : []}
               {/* a plain button like the other sessions' titles, so both start at the same place; it does nothing when pressed */}
               <Button key={`title-${p.id}`} plain dimColor={isLeaving} label={fitTitle(p.title)} onPress={() => undefined} />
               <Box flexGrow={1} />
@@ -1439,7 +1500,7 @@ export const register: Register = on => {
             // with no bar, the style still picks the glyph and its colour, from the session's state alone
             const stub: Plan = { id: '', title: '', kind: 'plan', stages: [], state: asState, note: null, startedAt: 0 }
             const glyph = look ? look.glyph(p ?? stub) : { char: STATE_GLYPH[p?.state ?? asState], color: STATE_COLOR[p?.state ?? asState] }
-            const runColor = (look?.glyph(stub) ?? null)?.color ?? STATE_COLOR.running
+            const runColor = accentGlyph() ?? (look?.glyph(stub) ?? null)?.color ?? STATE_COLOR.running
             const status = r.state === 'done' ? '跑完了' : r.state === 'needs_input' ? '等你決定' : '在跑'
             const w = p ? where(p) : null
             const pct = p && w ? (p.state === 'done' ? 100 : Math.round((Math.min(w.pos, w.total) / Math.max(1, w.total)) * 100)) : 0
@@ -1447,7 +1508,7 @@ export const register: Register = on => {
 
             return (
               <Box key={`away-${r.hostId}`} flexDirection="row" alignItems={drawn && drawn.height > TRACK_H ? 'flex-start' : 'center'} gap={1}>
-                {glyph ? [<Text key="glyph" color={glyph.color} dimColor={r.isLeaving}>{glyph.char}</Text>] : []}
+                {glyph ? [glyphCell(glyph, r.isLeaving)] : []}
                 <Button key={`switch-${r.hostId}`} plain dimColor={r.isLeaving} label={fitTitle(awayTitle(r))} onPress={() => switchTo($, r)} />
                 <Box flexGrow={1} />
                 {p && drawn && Svg ? (

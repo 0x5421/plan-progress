@@ -27,12 +27,42 @@ export type BarStyle = {
 // colours live in CSS variables so one drawing follows the app's light or dark scheme
 const PALETTE = `<style>svg{--ink:#1F1E1C;--muted:#73726C;--track:rgba(31,30,28,.08);--faint:rgba(31,30,28,.24);--panel:#F0EEE6;--on:#FFFBF7;--amber:#B26F12;--red:#C93C3C;--green:#2E8655;--clay:#C6613F;--blue:#3D6FD6;--violet:#6B5BD2;--clayS:#A9502F;--greenS:#256F46;--teal:#0E8A8F}
 @media (prefers-color-scheme:dark){svg{--ink:#F2F0EA;--muted:#A3A19A;--track:rgba(242,240,234,.10);--faint:rgba(242,240,234,.30);--panel:#2A2927;--on:#1F1E1C;--amber:#E2A64B;--red:#F07272;--green:#5FC58D;--clay:#E08A6A;--blue:#86A8F2;--violet:#A99CF6;--clayS:#E08A6A;--greenS:#5FC58D;--teal:#4FC3C7}}</style>`
+// the colour a person picks in the pane for "running", in place of the style's own; done, waiting and failed keep
+// green, amber and red. light/dark are the drawing's colour in each scheme, deep the light one behind white letters
+// (5:1 or better), glyph the dot left of the title, one hex for both schemes
+export const ACCENT_IDS = ['clay', 'blue', 'violet', 'teal', 'pink', 'ink'] as const
+export type AccentId = (typeof ACCENT_IDS)[number]
+export const ACCENT_INFO: Record<AccentId, { name: string; light: string; dark: string; deep: string; glyph: string }> = {
+  clay: { name: '陶土橘', light: '#C6613F', dark: '#E08A6A', deep: '#A9502F', glyph: '#D97757' },
+  blue: { name: '藍', light: '#3D6FD6', dark: '#86A8F2', deep: '#2F5BB8', glyph: '#5B85E8' },
+  violet: { name: '紫', light: '#6B5BD2', dark: '#A99CF6', deep: '#5A4AC0', glyph: '#8B7CF6' },
+  teal: { name: '青', light: '#0E8A8F', dark: '#4FC3C7', deep: '#0B7378', glyph: '#14A3A8' },
+  pink: { name: '桃紅', light: '#B83A78', dark: '#E48AB8', deep: '#9E2F66', glyph: '#D0548F' },
+  ink: { name: '墨黑', light: '#1F1E1C', dark: '#F2F0EA', deep: '#1F1E1C', glyph: '#8A8984' },
+}
+export const isAccentId = (v: unknown): v is AccentId => typeof v === 'string' && (ACCENT_IDS as readonly string[]).includes(v)
+// set by the plugin from the saved choice before it draws; null keeps every style's own colour
+let accent: AccentId | null = null
+export const setAccent = (v: unknown) => {
+  accent = isAccentId(v) ? v : null
+}
+// the chosen glyph colour, for a row the plugin colours itself
+export const accentGlyph = () => (accent ? ACCENT_INFO[accent].glyph : null)
+// every style names its colour through these variables, so one override recolours them all; hairline and ledger,
+// black and white by design, take it through --acc on their moving point only
+const accentStyle = () => {
+  if (!accent) return ''
+  const a = ACCENT_INFO[accent]
+  const vars = (c: string, deep: string) => `--clay:${c};--blue:${c};--violet:${c};--teal:${c};--clayS:${deep};--acc:${c}`
+  return `<style>svg{${vars(a.light, a.deep)}}@media (prefers-color-scheme:dark){svg{${vars(a.dark, a.dark)}}}</style>`
+}
+
 // the glyph left of the title is a Text colour, one hex for both schemes
 const GLYPH_COLOR = { clay: '#D97757', blue: '#5B85E8', violet: '#8B7CF6', teal: '#14A3A8', needs_input: '#E09A1E', error: '#E5484D', done: '#30A46C' }
 const SANS = "'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif"
 const MONO = "ui-monospace,'SF Mono',Menlo,monospace"
 
-const svg = (W: number, H: number, body: string) => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${PALETTE}${body}</svg>`
+const svg = (W: number, H: number, body: string) => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${PALETTE}${accentStyle()}${body}</svg>`
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c)
 const fin = (s: StepStatus) => s === 'done' || s === 'skipped'
 const n1 = (v: number) => v.toFixed(1)
@@ -69,9 +99,9 @@ function where(p: Plan): Where {
 }
 const stateVar = (state: PlanState, accent: string) =>
   state === 'running' ? accent : state === 'needs_input' ? 'var(--amber)' : state === 'error' ? 'var(--red)' : 'var(--green)'
-const glyphFor = (p: Plan, accent: string): Glyph => ({
+const glyphFor = (p: Plan, own: string): Glyph => ({
   char: p.state === 'needs_input' ? '?' : p.state === 'error' ? '!' : p.state === 'done' ? '✓' : '●',
-  color: p.state === 'running' ? accent : GLYPH_COLOR[p.state],
+  color: p.state === 'running' ? (accentGlyph() ?? own) : GLYPH_COLOR[p.state],
 })
 const percent = (p: Plan) => {
   const w = where(p)
@@ -224,22 +254,21 @@ const segments: BarStyle = {
 
 const hairline: BarStyle = {
   glyph: () => null,
-  right: (p, now) => (p.state === 'done' ? 'Done' : elapsed(now - p.startedAt)),
+  // how long it has run; once done, the step count (the bar already says Done)
+  right: (p, now) => (p.state === 'done' ? stepCount(p) : elapsed(now - p.startedAt)),
   draw(p, W, now, agents) {
     const H = 22
     const w = where(p)
     const done = p.state === 'done'
-    const c = done ? 'var(--green)' : p.state === 'running' ? 'var(--ink)' : stateVar(p.state, 'var(--ink)')
+    const c = done ? 'var(--green)' : p.state === 'running' ? 'var(--acc, var(--ink))' : stateVar(p.state, 'var(--ink)')
     const sName = done ? 'Done' : (p.stages[w.stage]?.name ?? '')
     const stepT = done ? '' : (p.state !== 'running' && p.note) || w.title
     const nW = textWidth(sName, 12) * 1.05
     const sT = fit(stepT, 12, Math.max(0, W * 0.42 - nW - 8))
-    const labelW = nW + (sT ? 8 + textWidth(sT, 12) : 0)
-    let out = `<text x="0" y="15" font-family="${SANS}" font-size="12"><tspan font-weight="500" ${fill(done ? 'var(--green)' : 'var(--ink)')}>${esc(sName)}</tspan>${sT ? `<tspan dx="8" ${fill(p.state === 'running' ? 'var(--muted)' : c)}>${esc(sT)}</tspan>` : ''}</text>`
-    const cnt = stepCount(p)
+    const labelW = nW + (sT ? 6 + textWidth(`· ${sT}`, 12) : 0)
+    let out = `<text x="0" y="15" font-family="${SANS}" font-size="12"><tspan font-weight="500" ${fill(done ? 'var(--green)' : 'var(--ink)')}>${esc(sName)}</tspan>${sT ? `<tspan dx="6" ${fill(p.state === 'running' ? 'var(--muted)' : c)}>· ${esc(sT)}</tspan>` : ''}</text>`
     const L = labelW + 16
-    const R = W - textWidth(cnt, 11) - 12
-    out += `<text x="${W}" y="15" text-anchor="end" font-family="${SANS}" font-size="11" ${fill('var(--muted)')}>${cnt}</text>`
+    const R = W - 8
     const X = (k: number) => L + (k / Math.max(1, w.total)) * (R - L)
     const fx = X(done ? w.total : w.pos)
     let k = 0
@@ -275,13 +304,16 @@ const beads: BarStyle = {
     const w = where(p)
     const done = p.state === 'done'
     const acc = done ? 'var(--green)' : 'var(--blue)'
+    // narrow bars pull the beads of a stage together first; the gap between stages keeps at least 12, so the
+    // stages stay apart, and the beads shrink with their spacing
     let sp = 15
     let sg = 14
     const need = () => p.stages.reduce((a, s) => a + (s.steps.length - 1) * sp + 10, 0) + (p.stages.length - 1) * sg
-    while (need() > W * 0.55 && sp > 7) {
+    while (need() > W * 0.55 && sp > 8) {
       sp -= 1
-      sg = Math.max(8, sg - 0.6)
+      sg = Math.max(12, sg - 0.4)
     }
+    const k = Math.max(0.7, Math.min(1, sp / 12))
     let x = 6
     let out = ''
     for (const s of p.stages) {
@@ -292,12 +324,12 @@ const beads: BarStyle = {
       }
       s.steps.forEach((st, j) => {
         const bx = n1(xs[j] ?? 0)
-        if (fin(st.status)) out += `<circle cx="${bx}" cy="${cy}" r="4.5" ${fill(acc)}/>`
+        if (fin(st.status)) out += `<circle cx="${bx}" cy="${cy}" r="${n1(4.5 * k)}" ${fill(acc)}/>`
         else if (st.status === 'error') out += `<circle cx="${bx}" cy="${cy}" r="5.5" ${fill('var(--red)')}/><path d="M${n1(Number(bx) - 2)} ${cy - 2}l4 4M${n1(Number(bx) + 2)} ${cy - 2}l-4 4" style="stroke:var(--on);stroke-width:1.4;stroke-linecap:round"/>`
         else if (st.status === 'active') {
           const c = p.state === 'needs_input' ? 'var(--amber)' : acc
           out += `<circle cx="${bx}" cy="${cy}" r="5.5" ${ring(c, 1.8)}/><circle cx="${bx}" cy="${cy}" r="2.4" ${fill(c)}><animate attributeName="r" values="2;3.2;2" dur="${p.state === 'needs_input' ? 1.8 : 1.2}s" repeatCount="indefinite"/></circle>`
-        } else out += `<circle cx="${bx}" cy="${cy}" r="3.6" ${ring('var(--faint)', 1.5)}/>`
+        } else out += `<circle cx="${bx}" cy="${cy}" r="${n1(3.6 * k)}" ${ring('var(--faint)', 1.5)}/>`
       })
       x = (xs[xs.length - 1] ?? x) + 10 + sg - 4
     }
@@ -336,8 +368,9 @@ const ledger: BarStyle = {
     p.stages.forEach((s, i) => {
       const isCur = !done && i === w.stage
       const allDone = s.steps.every(t => fin(t.status))
-      if (mode !== 'none') {
-        const name = nameOf(s.name, mode)
+      // too narrow for every name: the current stage still shows its short one
+      if (mode !== 'none' || isCur) {
+        const name = nameOf(s.name, mode === 'none' ? 'short' : mode)
         out += `<text x="${n1(x)}" y="15" font-family="${MONO}" font-size="${px}" font-weight="${isCur ? 700 : 500}" letter-spacing=".04em" ${fill(isCur ? 'var(--ink)' : 'var(--muted)', isCur || allDone ? 1 : 0.7)}>${esc(name)}</text>`
         x += textWidth(name, px, true) * 1.04 + lg
       }
@@ -346,7 +379,7 @@ const ledger: BarStyle = {
         else if (fin(st.status)) out += `<rect x="${n1(x)}" y="5" width="${cw}" height="12" rx="1.5" ${fill('var(--ink)', 0.72)}/>`
         else if (st.status === 'error') out += `<rect x="${n1(x)}" y="5" width="${cw}" height="12" rx="1.5" ${fill('var(--red)')}/>`
         else if (st.status === 'active') {
-          const c = p.state === 'needs_input' ? 'var(--amber)' : 'var(--ink)'
+          const c = p.state === 'needs_input' ? 'var(--amber)' : 'var(--acc, var(--ink))'
           out += `<rect x="${n1(x)}" y="5" width="${cw}" height="12" rx="1.5" ${fill(c)}><animate attributeName="opacity" values="1;1;.15;.15" keyTimes="0;.5;.5;1" dur="1.05s" repeatCount="indefinite"/></rect>`
         } else out += `<rect x="${n1(x + 0.6)}" y="5.6" width="${cw - 1.2}" height="10.8" rx="1.2" style="fill:none;stroke:var(--faint);stroke-width:1.2"/>`
         x += cw + cg
@@ -386,26 +419,42 @@ const transit: BarStyle = {
     bounds.forEach((k, i) => {
       const passed = k <= pos
       const last = i === bounds.length - 1
-      out += `<circle cx="${n1(X(k))}" cy="${cy}" r="${last ? 5.5 : 4.5}" style="fill:${passed ? lineC : 'var(--panel)'};stroke:${passed ? 'var(--panel)' : 'var(--faint)'};stroke-width:${passed ? 2 : 1.6}"/>`
+      // a passed station is a filled dot; one still ahead is smaller and faint, so the way ahead stays quiet
+      out += passed
+        ? `<circle cx="${n1(X(k))}" cy="${cy}" r="${last ? 5.5 : 4.5}" style="fill:${lineC};stroke:var(--panel);stroke-width:2"/>`
+        : `<circle cx="${n1(X(k))}" cy="${cy}" r="${last ? 4 : 3.4}" style="fill:var(--panel);stroke:var(--faint);stroke-width:1.4"/>`
       if (last && done) out += `<path d="M${n1(X(k) - 2.4)} ${cy + 0.2}l1.6 1.6 3.2-3.4" style="fill:none;stroke:var(--on);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round"/>`
     })
     if (!done) {
       const tx = X(pos + 0.5)
-      if (p.state === 'running') out += `<circle cx="${n1(tx)}" cy="${cy}" r="6" ${fill(c, 0.28)}><animate attributeName="r" values="6;12" dur="1.8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines=".2 .8 .3 1"/><animate attributeName="fill-opacity" values=".28;0" dur="1.8s" repeatCount="indefinite"/></circle>`
-      out += `<rect x="${n1(tx - 9)}" y="${cy - 5.5}" width="18" height="11" rx="5.5" style="fill:${c};stroke:var(--panel);stroke-width:2"/>`
-      if (p.state === 'needs_input') out += `<text x="${n1(tx)}" y="${cy + 3.6}" text-anchor="middle" font-family="${SANS}" font-size="9.5" font-weight="700" ${fill('var(--on)')}>?</text>`
-      else if (p.state === 'error') out += `<path d="M${n1(tx - 2)} ${cy - 2}l4 4M${n1(tx + 2)} ${cy - 2}l-4 4" style="stroke:var(--on);stroke-width:1.4;stroke-linecap:round"/>`
-      else out += `<circle cx="${n1(tx - 3)}" cy="${cy}" r="1.2" ${fill('var(--on)')}/><circle cx="${n1(tx + 1)}" cy="${cy}" r="1.2" ${fill('var(--on)')}/><circle cx="${n1(tx + 5)}" cy="${cy}" r="1.2" ${fill('var(--on)', 0.5)}/>`
+      // where the train is: a ring with a breathing centre, like the beads' active step; amber with ? or red with ×
+      // when it waits or fails
+      if (p.state === 'running') {
+        out += `<circle cx="${n1(tx)}" cy="${cy}" r="6" ${fill(c, 0.22)}><animate attributeName="r" values="6;11" dur="2.4s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines=".2 .8 .3 1"/><animate attributeName="fill-opacity" values=".22;0" dur="2.4s" repeatCount="indefinite"/></circle>`
+        out += `<circle cx="${n1(tx)}" cy="${cy}" r="6" ${ring(c, 2)}/><circle cx="${n1(tx)}" cy="${cy}" r="2.6" ${fill(c)}><animate attributeName="r" values="2.2;3.2;2.2" keyTimes="0;.5;1" calcMode="spline" keySplines=".45 0 .55 1;.45 0 .55 1" dur="2.4s" repeatCount="indefinite"/></circle>`
+      } else {
+        out += `<circle cx="${n1(tx)}" cy="${cy}" r="6.5" style="fill:${c};stroke:var(--panel);stroke-width:2"/>`
+        if (p.state === 'needs_input') out += `<text x="${n1(tx)}" y="${cy + 3.4}" text-anchor="middle" font-family="${SANS}" font-size="9.5" font-weight="700" ${fill('var(--on)')}>?</text>`
+        else out += `<path d="M${n1(tx - 2)} ${cy - 2}l4 4M${n1(tx + 2)} ${cy - 2}l-4 4" style="stroke:var(--on);stroke-width:1.4;stroke-linecap:round"/>`
+      }
     }
+    // station names under their stretch, without the count (it is right of the bar). The current one always shows,
+    // kept inside the bar; another shows only whole and clear of it, never cut to "Res…"
+    const px = 10.5
+    const mid = (i: number) => (X(bounds[i] ?? 0) + X(bounds[i + 1] ?? 0)) / 2
+    const cur = done ? -1 : w.stage
+    const curName = cur >= 0 ? (p.stages[cur]?.name ?? '') : ''
+    const curW = textWidth(curName, px)
+    const curX = cur >= 0 ? Math.min(R - curW / 2, Math.max(L + curW / 2, mid(cur))) : 0
     p.stages.forEach((s, i) => {
       const a = X(bounds[i] ?? 0)
       const b = X(bounds[i + 1] ?? 0)
-      const isCur = !done && i === w.stage
+      const isCur = i === cur
       const passed = (bounds[i + 1] ?? 0) <= pos
-      const px = 10.5
-      let label = isCur ? `${s.name} ${w.step}/${w.stageSize}` : s.name
-      if (textWidth(label, px) > b - a - 6) label = fit(s.name, px, b - a - 6)
-      if (label) out += `<text x="${n1((a + b) / 2)}" y="${cy + 21}" text-anchor="middle" font-family="${SANS}" font-size="${px}" font-weight="${isCur ? 600 : 500}" ${fill(isCur ? 'var(--ink)' : 'var(--muted)', isCur || passed ? 1 : 0.7)}>${esc(label)}</text>`
+      const tw = textWidth(s.name, px)
+      const x = isCur ? curX : mid(i)
+      const isClear = isCur || (tw <= b - a - 6 && (cur < 0 || x + tw / 2 + 8 < curX - curW / 2 || x - tw / 2 - 8 > curX + curW / 2))
+      if (isClear) out += `<text x="${n1(x)}" y="${cy + 21}" text-anchor="middle" font-family="${SANS}" font-size="${px}" font-weight="${isCur ? 600 : 500}" ${fill(isCur ? 'var(--ink)' : 'var(--muted)', isCur || passed ? 1 : 0.7)}>${esc(s.name)}</text>`
     })
     return withStrips(out, H, W, now, agents, { accent: 'var(--violet)', bg: true, tint: 0.1 })
   },
