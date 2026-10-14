@@ -179,6 +179,8 @@ test('desktop: every style draws the bar above the prompt', async ($, on) => {
     expect(await ui.find({ key: 'style-demo' })).toBeUndefined()
     // counts read like 5/16, never zero-padded
     expect(JSON.stringify(await ui.drawn())).not.toMatch(/"0\d\/\d+"/)
+    // a stage name beside the bar is medium, not bold, so it does not outweigh the title
+    expect(String(svg[0]?.props.source)).not.toContain('<tspan font-weight="600"')
     await ui.unmount()
   }
 })

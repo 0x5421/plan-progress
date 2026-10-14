@@ -196,7 +196,7 @@ const hairline: BarStyle = {
     const nW = textWidth(sName, 12) * 1.05
     const sT = fit(stepT, 12, Math.max(0, W * 0.42 - nW - 8))
     const labelW = nW + (sT ? 8 + textWidth(sT, 12) : 0)
-    let out = `<text x="0" y="15" font-family="${SANS}" font-size="12"><tspan font-weight="600" ${fill(done ? 'var(--green)' : 'var(--ink)')}>${esc(sName)}</tspan>${sT ? `<tspan dx="8" ${fill(p.state === 'running' ? 'var(--muted)' : c)}>${esc(sT)}</tspan>` : ''}</text>`
+    let out = `<text x="0" y="15" font-family="${SANS}" font-size="12"><tspan font-weight="500" ${fill(done ? 'var(--green)' : 'var(--ink)')}>${esc(sName)}</tspan>${sT ? `<tspan dx="8" ${fill(p.state === 'running' ? 'var(--muted)' : c)}>${esc(sT)}</tspan>` : ''}</text>`
     const cnt = stepCount(p)
     const L = labelW + 16
     const R = W - textWidth(cnt, 11) - 12
@@ -268,7 +268,7 @@ const beads: BarStyle = {
     const room = W - lx
     const nW = textWidth(sName, 12) * 1.05
     const sT = fit(stepT, 12, room - nW - 22)
-    if (room > nW) out += `<text x="${n1(lx)}" y="15" font-family="${SANS}" font-size="12"><tspan font-weight="600" ${fill(done ? 'var(--green)' : 'var(--ink)')}>${esc(sName)}</tspan>${sT ? `<tspan dx="6" ${fill('var(--muted)')}>· ${esc(sT)}</tspan>` : ''}</text>`
+    if (room > nW) out += `<text x="${n1(lx)}" y="15" font-family="${SANS}" font-size="12"><tspan font-weight="500" ${fill(done ? 'var(--green)' : 'var(--ink)')}>${esc(sName)}</tspan>${sT ? `<tspan dx="6" ${fill('var(--muted)')}>· ${esc(sT)}</tspan>` : ''}</text>`
     return withStrips(out, H, W, now, agents, { accent: 'var(--blue)', bg: false })
   },
 }
