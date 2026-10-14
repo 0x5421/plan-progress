@@ -1249,6 +1249,19 @@ export const register: Register = on => {
     )
   })
 
+  // an experiment (2026-10-15): the desktop app's update moved the footer gear onto a row of its own, so a second gear
+  // sits at the end of the hint line under the prompt, to see where the desktop draws that line, if it draws it at all
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    const { Box, Button } = $.ui.resolve(e)
+    const line = await next(e)
+    return (
+      <Box flexDirection="row" alignItems="center" gap={1}>
+        {line}
+        <Button key="progress-style-hint" plain dimColor label={SETTINGS_GLYPH} onPress={() => openStyles($)} />
+      </Box>
+    )
+  })
+
   // four settings, each a press away: whether the bars show, whether sounds play, how subagents show,
   // then one bordered tile per style with its preview
   on('ui.render', { component: 'Pane', requestId: STYLE_PANE }, async ($, e) => {

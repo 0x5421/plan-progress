@@ -62,6 +62,14 @@ for (const surface of ['desktop', 'terminal'] as const) {
     expect(host.opened).toEqual([PANE])
   })
 
+  test(`${surface}: the hint line under the prompt keeps its own text and ends with a second ⚙ that opens the pane`, async ($, on) => {
+    const host = engine(on)
+    const ui = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'PromptHint', props: { hint: '? for shortcuts', isDraft: false, isWorking: false } as never })
+    expect((await ui.find({ key: 'progress-style-hint' }))?.text).toBe('\u2699\uFE0E')
+    await ui.press({ key: 'progress-style-hint' })
+    expect(host.opened).toEqual([PANE])
+  })
+
   test(`${surface}: the pane shows and hides the bars`, async ($, on) => {
     engine(on)
     await $.command.run({ command: 'progress-demo' })
