@@ -68,6 +68,8 @@ const fin = (s: StepStatus) => s === 'done' || s === 'skipped'
 const n1 = (v: number) => v.toFixed(1)
 const fill = (c: string, op?: number) => `style="fill:${c}${op === undefined ? '' : `;fill-opacity:${op}`}"`
 const ring = (c: string, w: number, bg = 'var(--panel)') => `style="fill:${bg};stroke:${c};stroke-width:${w}"`
+// the outline of a step left behind (see leftBehind): dashed, in the style's running colour
+const dashed = (c: string, w = 1.5) => `style="fill:var(--panel);stroke:${c};stroke-width:${w};stroke-dasharray:2.2 1.8"`
 
 // an estimate of drawn text width; the module has no canvas to measure with
 function textWidth(s: string, px: number, mono = false): number {
@@ -87,15 +89,29 @@ function fit(s: string, px: number, max: number, mono = false): string {
   return t.length > 1 ? t + '…' : ''
 }
 
-type Where = { pos: number; total: number; stage: number; step: number; stageSize: number; title: string }
+// where a plan stands. Claude may work out of order: it can leave a step and come back to it later, so the
+// current step is the one marked active (or failed), not the first unfinished one; pos counts the finished steps
+// and at is the current step's place among all steps
+type Where = { pos: number; at: number; total: number; stage: number; step: number; stageSize: number; title: string }
 function where(p: Plan): Where {
   const steps = p.stages.flatMap((s, i) => s.steps.map((step, j) => ({ i, j, step })))
-  const at = steps.findIndex(x => !fin(x.step.status))
-  const pos = p.state === 'done' || at < 0 ? steps.length : at
-  const cur = steps[Math.min(pos, steps.length - 1)]
+  const live = steps.findIndex(x => x.step.status === 'active' || x.step.status === 'error')
+  const first = steps.findIndex(x => !fin(x.step.status))
+  const isDone = p.state === 'done' || first < 0
+  const at = isDone ? steps.length : live >= 0 ? live : first
+  const pos = isDone ? steps.length : steps.filter(x => fin(x.step.status)).length
+  const cur = steps[Math.min(at, steps.length - 1)]
   const stage = cur?.i ?? 0
   const stageSize = p.stages[stage]?.steps.length ?? 0
-  return { pos, total: steps.length, stage, step: pos >= steps.length ? stageSize : (cur?.j ?? 0) + 1, stageSize, title: cur?.step.title ?? '' }
+  return { pos, at, total: steps.length, stage, step: at >= steps.length ? stageSize : (cur?.j ?? 0) + 1, stageSize, title: cur?.step.title ?? '' }
+}
+// a step left behind: not finished, and before the current one. Every style draws it with a dashed outline in the
+// running colour, so it reads apart from the steps still ahead (solid, faint)
+function leftBehind(p: Plan): (i: number, j: number) => boolean {
+  const w = where(p)
+  const flat = p.stages.flatMap((s, i) => s.steps.map((step, j) => ({ i, j, step })))
+  const keys = new Set(flat.filter((x, k) => k < w.at && !fin(x.step.status) && x.step.status !== 'error').map(x => `${x.i}:${x.j}`))
+  return (i, j) => keys.has(`${i}:${j}`)
 }
 const stateVar = (state: PlanState, accent: string) =>
   state === 'running' ? accent : state === 'needs_input' ? 'var(--amber)' : state === 'error' ? 'var(--red)' : 'var(--green)'
@@ -189,6 +205,10 @@ const segments: BarStyle = {
     let x = 0
     let defs = ''
     let out = ''
+    const isBehind = leftBehind(p)
+    // a step left behind: a dashed outline inside its cell, in the running colour
+    const behindBox = (bx: number, by: number, bw: number, bh: number) =>
+      `<rect x="${n1(bx + 1.5)}" y="${n1(by + 1.5)}" width="${n1(Math.max(0, bw - 3))}" height="${n1(Math.max(0, bh - 3))}" rx="${bh > 10 ? 4 : 2}" style="fill:none;stroke:var(--clayS);stroke-width:1.3;stroke-dasharray:3 2.5"/>`
     p.stages.forEach((s, i) => {
       const sw = widths[i] ?? 0
       const k = Math.max(1, s.steps.length)
@@ -208,10 +228,18 @@ const segments: BarStyle = {
         g += `<rect x="${n1(x)}" y="0" width="${n1(sw)}" height="${H}" ${fill(solid)}/>`
       } else if (isDone) {
         g += `<rect x="${n1(x)}" y="${y}" width="${n1(sw)}" height="${h}" ${fill(fault ? 'var(--ink)' : 'var(--clayS)', fault ? 0.12 : 0.26)}/>`
+      } else if (!isCur && s.steps.some((_, j) => isBehind(i, j))) {
+        // a stage the work moved past with steps still open: its finished steps tinted, the open ones outlined
+        s.steps.forEach((t, j) => {
+          if (fin(t.status)) g += `<rect x="${n1(x + stepW * j)}" y="${y}" width="${n1(stepW)}" height="${h}" ${fill(fault ? 'var(--ink)' : 'var(--clayS)', fault ? 0.12 : 0.26)}/>`
+          else if (isBehind(i, j)) g += behindBox(x + stepW * j, y, stepW, h)
+        })
       } else if (isCur) {
         // one fill over the whole stage: solid over its finished steps, fading through the active one to a tint, so
         // there is no hard edge where the finished part stops. The middle of the fade breathes, slowly, eased
-        const curIdx = Math.max(0, s.steps.findIndex(t => !fin(t.status)))
+        // the step being worked on: the active (or failed) one, which may come after a step left behind
+        const live = s.steps.findIndex(t => t.status === 'active' || t.status === 'error')
+        const curIdx = Math.max(0, live >= 0 ? live : s.steps.findIndex(t => !fin(t.status)))
         const at = (v: number) => n1(Math.min(100, Math.max(0, ((v - x) / Math.max(1, sw)) * 100)))
         const d = x + stepW * curIdx
         const m = d + stepW * 0.5
@@ -221,8 +249,13 @@ const segments: BarStyle = {
         const [lo, hi] = fault ? [0.25, 0.6] : [0.35, 0.7]
         const breathe = `<animate attributeName="stop-opacity" values="${hi};${lo};${hi}" keyTimes="0;.5;1" calcMode="spline" keySplines=".45 0 .55 1;.45 0 .55 1" dur="2.4s" repeatCount="indefinite"/>`
         const stop = (v: number, c: string, op: number, alive = false) => `<stop offset="${at(v)}%" style="stop-color:${c}" stop-opacity="${op}">${alive ? breathe : ''}</stop>`
-        // nothing finished yet in this stage: no solid head, the fade starts at its left edge
-        const headStops = curIdx > 0 ? stop(x, head, headOp) + stop(d, head, headOp) : ''
+        // the finished steps before the current one are solid; one left behind is clear, with a hard edge, and gets
+        // its dashed outline below. Nothing before the current step: no head, the fade starts at the left edge
+        let headStops = ''
+        for (let j = 0; j < curIdx; j++) {
+          const op = isBehind(i, j) ? 0 : headOp
+          headStops += stop(x + stepW * j, head, op) + stop(x + stepW * (j + 1), head, op)
+        }
         // running: the solid part fades out through the active step. Waiting or failed: the active step is one soft
         // band of amber or red between the grey finished part and the tint
         const bodyStops = fault
@@ -230,9 +263,18 @@ const segments: BarStyle = {
           : stop(curIdx > 0 ? m : x, tone, hi, true) + stop(e2, tone, 0.14)
         defs += `<linearGradient id="g${i}" gradientUnits="userSpaceOnUse" x1="${n1(x)}" x2="${n1(x + sw)}" y1="0" y2="0">${headStops}${bodyStops}${stop(x + sw, tone, 0.14)}</linearGradient>`
         g += `<rect x="${n1(x)}" y="0" width="${n1(sw)}" height="${H}" fill="url(#g${i})"/>`
-        // the name turns light over the solid part and back to ink through the same fade
+        for (let j = 0; j < curIdx; j++) if (isBehind(i, j)) g += behindBox(x + stepW * j, 0, stepW, H)
+        // the name is light over the solid steps and ink over a step left behind (hard edges, like the fill), and
+        // turns back to ink through the fade of the active step
         if (!fault && curIdx > 0) {
-          defs += `<linearGradient id="t${i}" gradientUnits="userSpaceOnUse" x1="${n1(x)}" x2="${n1(x + sw)}" y1="0" y2="0"><stop offset="${at(d)}%" style="stop-color:var(--on)"/><stop offset="${at(m)}%" style="stop-color:var(--ink)"/></linearGradient>`
+          let ts = ''
+          for (let j = 0; j < curIdx; j++) {
+            const c = isBehind(i, j) ? 'var(--ink)' : 'var(--on)'
+            ts += `<stop offset="${at(x + stepW * j)}%" style="stop-color:${c}"/><stop offset="${at(x + stepW * (j + 1))}%" style="stop-color:${c}"/>`
+          }
+          const last = isBehind(i, curIdx - 1) ? 'var(--ink)' : 'var(--on)'
+          ts += `<stop offset="${at(d)}%" style="stop-color:${last}"/><stop offset="${at(m)}%" style="stop-color:var(--ink)"/>`
+          defs += `<linearGradient id="t${i}" gradientUnits="userSpaceOnUse" x1="${n1(x)}" x2="${n1(x + sw)}" y1="0" y2="0">${ts}</linearGradient>`
           labelFill = `fill="url(#t${i})"`
         }
       }
@@ -266,16 +308,32 @@ const hairline: BarStyle = {
     const L = labelW + 16
     const R = W - 8
     const X = (k: number) => L + (k / Math.max(1, w.total)) * (R - L)
-    const fx = X(done ? w.total : w.pos)
+    // the head sits at the current step; the line is ink over each run of finished steps and dashed over a step left
+    // behind, so a skipped stretch shows as a gap still to fill
+    const fx = X(done ? w.total : w.at)
+    const isBehind = leftBehind(p)
     let k = 0
-    for (const s of p.stages) {
+    p.stages.forEach((s, si) => {
       const a = X(k) + (k ? 2 : 0)
       const end = k + s.steps.length
       const b = X(end) - (end < w.total ? 2 : 0)
       out += `<rect x="${n1(a)}" y="10" width="${n1(Math.max(0, b - a))}" height="2" rx="1" ${fill('var(--faint)', 0.55)}/>`
-      if (fx > a) out += `<rect x="${n1(a)}" y="10" width="${n1(Math.max(0, Math.min(b, fx) - a))}" height="2" rx="1" ${fill(done ? 'var(--green)' : 'var(--ink)', done ? 1 : 0.85)}/>`
+      let run = -1
+      for (let j = 0; j <= s.steps.length; j++) {
+        const isFin = j < s.steps.length && (done || fin(s.steps[j]?.status ?? 'pending'))
+        if (isFin && run < 0) run = j
+        if (!isFin && run >= 0) {
+          const x1 = Math.max(a, X(k + run))
+          const x2 = Math.min(b, X(k + j))
+          out += `<rect x="${n1(x1)}" y="10" width="${n1(Math.max(0, x2 - x1))}" height="2" rx="1" ${fill(done ? 'var(--green)' : 'var(--ink)', done ? 1 : 0.85)}/>`
+          run = -1
+        }
+      }
+      s.steps.forEach((_, j) => {
+        if (isBehind(si, j)) out += `<line x1="${n1(Math.max(a, X(k + j)) + 1.5)}" x2="${n1(Math.min(b, X(k + j + 1)) - 1.5)}" y1="11" y2="11" style="stroke:var(--acc, var(--ink));stroke-width:2;stroke-dasharray:2.5 2"/>`
+      })
       k = end
-    }
+    })
     if (done) {
       out += `<circle cx="${n1(R)}" cy="11" r="6" ${fill('var(--green)')}/><path d="M${n1(R - 2.6)} 11.2l1.8 1.8 3.4-3.6" style="fill:none;stroke:var(--on);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round"/>`
     } else if (p.state === 'needs_input') {
@@ -312,7 +370,10 @@ const beads: BarStyle = {
     const k = Math.max(0.7, Math.min(1, sp / 12))
     let x = 6
     let out = ''
+    const isBehind = leftBehind(p)
+    let si = -1
     for (const s of p.stages) {
+      si += 1
       const xs = s.steps.map((_, j) => x + j * sp)
       for (let j = 1; j < xs.length; j++) {
         const on = fin(s.steps[j]?.status ?? 'pending')
@@ -325,7 +386,8 @@ const beads: BarStyle = {
         else if (st.status === 'active') {
           const c = p.state === 'needs_input' ? 'var(--amber)' : acc
           out += `<circle cx="${bx}" cy="${cy}" r="5.5" ${ring(c, 1.8)}/><circle cx="${bx}" cy="${cy}" r="2.4" ${fill(c)}><animate attributeName="r" values="2;3.2;2" dur="${p.state === 'needs_input' ? 1.8 : 1.2}s" repeatCount="indefinite"/></circle>`
-        } else out += `<circle cx="${bx}" cy="${cy}" r="${n1(3.6 * k)}" ${ring('var(--faint)', 1.5)}/>`
+        } else if (isBehind(si, j)) out += `<circle cx="${bx}" cy="${cy}" r="${n1(3.8 * k)}" ${dashed(acc)}/>`
+        else out += `<circle cx="${bx}" cy="${cy}" r="${n1(3.6 * k)}" ${ring('var(--faint)', 1.5)}/>`
       })
       x = (xs[xs.length - 1] ?? x) + 10 + sg - 4
     }
@@ -361,6 +423,7 @@ const ledger: BarStyle = {
     const mode = width('full') <= W * 0.78 ? 'full' : width('short') <= W * 0.9 ? 'short' : 'none'
     let x = 0
     let out = ''
+    const isBehind = leftBehind(p)
     p.stages.forEach((s, i) => {
       const isCur = !done && i === w.stage
       const allDone = s.steps.every(t => fin(t.status))
@@ -370,16 +433,17 @@ const ledger: BarStyle = {
         out += `<text x="${n1(x)}" y="15" font-family="${MONO}" font-size="${px}" font-weight="${isCur ? 700 : 500}" letter-spacing=".04em" ${fill(isCur ? 'var(--ink)' : 'var(--muted)', isCur || allDone ? 1 : 0.7)}>${esc(name)}</text>`
         x += textWidth(name, px, true) * 1.04 + lg
       }
-      for (const st of s.steps) {
+      s.steps.forEach((st, j) => {
         if (done) out += `<rect x="${n1(x)}" y="5" width="${cw}" height="12" rx="1.5" ${fill('var(--green)')}/>`
         else if (fin(st.status)) out += `<rect x="${n1(x)}" y="5" width="${cw}" height="12" rx="1.5" ${fill('var(--ink)', 0.72)}/>`
         else if (st.status === 'error') out += `<rect x="${n1(x)}" y="5" width="${cw}" height="12" rx="1.5" ${fill('var(--red)')}/>`
         else if (st.status === 'active') {
           const c = p.state === 'needs_input' ? 'var(--amber)' : 'var(--acc, var(--ink))'
           out += `<rect x="${n1(x)}" y="5" width="${cw}" height="12" rx="1.5" ${fill(c)}><animate attributeName="opacity" values="1;.3;1" keyTimes="0;.5;1" calcMode="spline" keySplines=".45 0 .55 1;.45 0 .55 1" dur="1.8s" repeatCount="indefinite"/></rect>`
-        } else out += `<rect x="${n1(x + 0.6)}" y="5.6" width="${cw - 1.2}" height="10.8" rx="1.2" style="fill:none;stroke:var(--faint);stroke-width:1.2"/>`
+        } else if (isBehind(i, j)) out += `<rect x="${n1(x + 0.6)}" y="5.6" width="${cw - 1.2}" height="10.8" rx="1.2" ${dashed('var(--acc, var(--ink))', 1.2)}/>`
+        else out += `<rect x="${n1(x + 0.6)}" y="5.6" width="${cw - 1.2}" height="10.8" rx="1.2" style="fill:none;stroke:var(--faint);stroke-width:1.2"/>`
         x += cw + cg
-      }
+      })
       x += sgap - cg
     })
     const label = done ? 'Done' : (p.state !== 'running' && p.note) || w.title
@@ -406,9 +470,24 @@ const transit: BarStyle = {
     const L = pad
     const R = W - pad
     const X = (k: number) => L + (k / Math.max(1, w.total)) * (R - L)
-    const pos = done ? w.total : w.pos
+    // where the train is: the current step, which may lie past a step left behind
+    const pos = done ? w.total : w.at
+    const isBehind = leftBehind(p)
+    const flat = p.stages.flatMap((s, i) => s.steps.map((st, j) => ({ i, j, st })))
     let out = `<rect x="${L}" y="${cy - 1.5}" width="${n1(R - L)}" height="3" rx="1.5" ${fill('var(--faint)', 0.5)}/>`
-    out += `<rect x="${L}" y="${cy - 1.5}" width="${n1(X(pos) - L)}" height="3" rx="1.5" ${fill(lineC)}/>`
+    // the line is coloured over each run of finished steps, dashed over a step left behind
+    let run = -1
+    for (let k = 0; k <= flat.length; k++) {
+      const isFin = k < flat.length && (done || fin(flat[k]?.st.status ?? 'pending'))
+      if (isFin && run < 0) run = k
+      if (!isFin && run >= 0) {
+        out += `<rect x="${n1(X(run))}" y="${cy - 1.5}" width="${n1(X(k) - X(run))}" height="3" rx="1.5" ${fill(lineC)}/>`
+        run = -1
+      }
+    }
+    flat.forEach((x, k) => {
+      if (isBehind(x.i, x.j)) out += `<line x1="${n1(X(k) + 2)}" x2="${n1(X(k + 1) - 2)}" y1="${cy}" y2="${cy}" style="stroke:${lineC};stroke-width:3;stroke-dasharray:3 2.5"/>`
+    })
     const bounds = [0]
     for (const s of p.stages) bounds.push((bounds[bounds.length - 1] ?? 0) + s.steps.length)
     for (let k = 1; k < w.total; k++) if (!bounds.includes(k)) out += `<circle cx="${n1(X(k))}" cy="${cy}" r="1.4" ${fill(k <= pos ? 'var(--panel)' : 'var(--faint)')}/>`
@@ -480,7 +559,10 @@ const grid: BarStyle = {
     const top = (H - (cell * 2 + cg)) / 2
     let x = 0
     let out = ''
+    const isBehind = leftBehind(p)
+    let si = -1
     for (const s of p.stages) {
+      si += 1
       s.steps.forEach((st, j) => {
         const cx = n1(x + Math.floor(j / 2) * (cell + cg))
         // a column holding one square, the last of an odd stage, puts it at the middle
@@ -493,7 +575,8 @@ const grid: BarStyle = {
         else if (st.status === 'active') {
           const c = p.state === 'needs_input' ? 'var(--amber)' : acc
           out += `<rect ${box} ${fill(c)}><animate attributeName="fill-opacity" values="1;.3;1" dur="${p.state === 'needs_input' ? 1.8 : 1.2}s" repeatCount="indefinite"/></rect>`
-        } else out += `<rect x="${n1(Number(cx) + 0.5)}" y="${n1(Number(cy) + 0.5)}" width="${cell - 1}" height="${cell - 1}" rx="${cell > 5 ? 1.2 : 0.8}" style="fill:none;stroke:var(--faint);stroke-width:1"/>`
+        } else
+          out += `<rect x="${n1(Number(cx) + 0.5)}" y="${n1(Number(cy) + 0.5)}" width="${cell - 1}" height="${cell - 1}" rx="${cell > 5 ? 1.2 : 0.8}" ${isBehind(si, j) ? dashed(acc, 1.2) : 'style="fill:none;stroke:var(--faint);stroke-width:1"'}/>`
       })
       x += cols(s.steps.length) * (cell + cg) - cg + sgap
     }

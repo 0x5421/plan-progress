@@ -239,16 +239,21 @@ const DEMO = (now: number): Plan => ({
 
 // ---------- drawing ----------
 
-type Where = { pos: number; total: number; stage: number; step: number; stageSize: number }
+// the current step is the one marked active (or failed), since Claude may leave a step for later; pos counts the
+// finished steps, at is the current step's place (the same rule as where() in styles.ts)
+type Where = { pos: number; at: number; total: number; stage: number; step: number; stageSize: number }
 
 function where(p: Plan): Where {
   const steps = p.stages.flatMap((s, i) => s.steps.map((step, j) => ({ i, j, step })))
-  const at = steps.findIndex(x => !isFinished(x.step.status))
-  const pos = p.state === 'done' || at < 0 ? steps.length : at
-  const cur = steps[Math.min(pos, steps.length - 1)]
+  const live = steps.findIndex(x => x.step.status === 'active' || x.step.status === 'error')
+  const first = steps.findIndex(x => !isFinished(x.step.status))
+  const isDone = p.state === 'done' || first < 0
+  const at = isDone ? steps.length : live >= 0 ? live : first
+  const pos = isDone ? steps.length : steps.filter(x => isFinished(x.step.status)).length
+  const cur = steps[Math.min(at, steps.length - 1)]
   const stage = cur?.i ?? 0
 
-  return { pos, total: steps.length, stage, step: pos >= steps.length ? (p.stages[stage]?.steps.length ?? 0) : (cur?.j ?? 0) + 1, stageSize: p.stages[stage]?.steps.length ?? 0 }
+  return { pos, at, total: steps.length, stage, step: at >= steps.length ? (p.stages[stage]?.steps.length ?? 0) : (cur?.j ?? 0) + 1, stageSize: p.stages[stage]?.steps.length ?? 0 }
 }
 
 const hex = (h: string) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16))
@@ -336,7 +341,7 @@ function trackSvg(p: Plan, W: number): string {
   const color = STATE_COLOR[p.state]
   const icon = ICON_PATH[p.state]
   const single = p.stages.length === 1
-  const number = single ? Math.min(w.total, w.pos + 1) : w.stage + 1
+  const number = single ? Math.min(w.total, w.at + 1) : w.stage + 1
   let knob = ''
   let kw = H
   if (isNarrow) {

@@ -1028,3 +1028,55 @@ test('ledger: the current cell breathes on an eased curve instead of blinking on
   expect(svg).toContain('values="1;.3;1" keyTimes="0;.5;1" calcMode="spline"')
   expect(svg).not.toContain('keyTimes="0;.5;.5;1"')
 })
+
+// worked out of order: two WinRate35 steps left for later, RBH done, SOL being worked on
+const SKIPPED = [
+  { name: 'WinRate35', steps: ['done', 'pending', 'pending'] },
+  { name: 'RBH', steps: ['done'] },
+  { name: 'SOL', steps: ['active'] },
+  { name: 'Report', steps: ['pending'] },
+]
+const IN_ORDER = [
+  { name: 'WinRate35', steps: ['done', 'done', 'active'] },
+  { name: 'RBH', steps: ['pending'] },
+  { name: 'SOL', steps: ['pending'] },
+  { name: 'Report', steps: ['pending'] },
+]
+
+test('out of order: the text and count follow the active step, counting the finished ones', () => {
+  const p = planOf('running', SKIPPED)
+  for (const id of ['segments', 'beads', 'ledger', 'transit', 'grid'] as const) expect(LOOKS[id].right(p, NOW)).toBe('2/6')
+  const beads = LOOKS.beads.draw(p, 520, NOW, null).svg
+  expect(beads).toContain('>SOL</tspan>')
+  expect(beads).not.toContain('>WinRate35</tspan>')
+})
+
+test('out of order: every style marks the steps left behind with a dashed outline, and only then', () => {
+  for (const id of ['segments', 'hairline', 'beads', 'ledger', 'transit', 'grid'] as const) {
+    expect(LOOKS[id].draw(planOf('running', SKIPPED), 520, NOW, null).svg).toContain('stroke-dasharray')
+    expect(LOOKS[id].draw(planOf('running', IN_ORDER), 520, NOW, null).svg).not.toContain('stroke-dasharray')
+  }
+  // beads: exactly the two WinRate35 steps
+  expect((LOOKS.beads.draw(planOf('running', SKIPPED), 520, NOW, null).svg.match(/stroke-dasharray/g) ?? []).length).toBe(2)
+})
+
+test('the bar row reads the active step, not the first open one', async ($, on) => {
+  engine(on)
+  const step = (title: string) => ({ title, status: 'pending' })
+  await $.tool.call({ tool: TOOL, id: 'sol', title: 'SOL', stages: [
+    { name: 'WinRate35', steps: [step('改門檻'), step('驗證與冷讀'), step('部署')] },
+    { name: 'SOL', steps: [step('回撤拆解')] },
+  ] } as never)
+  await $.tool.call({ tool: TOOL, id: 'sol', done: ['改門檻'], active: '回撤拆解' } as never)
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  const alt = String((await above.findAll({ type: 'Svg' })).find((el: any) => el.props.alt !== '')?.props.alt)
+  expect(alt).toContain('SOL: SOL, step 1 of 1')
+  await above.unmount()
+})
+
+test('segments: a step left behind inside the current stage is outlined, and the fade starts at the active step', () => {
+  const svg = LOOKS.segments.draw(planOf('running', [{ name: 'Build', steps: ['done', 'pending', 'active'] }, { name: 'Verify', steps: ['pending'] }]), 520, NOW, null).svg
+  expect((svg.match(/stroke-dasharray/g) ?? []).length).toBe(1)
+  // the name is light over the finished first step
+  expect(svg).toContain('fill="url(#t0)"')
+})
