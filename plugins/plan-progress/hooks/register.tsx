@@ -487,9 +487,9 @@ function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? '' : 's'}`
 }
 
-// another session's state in words, for a row with no bar: left-aligned in the bar's own width, muted in either scheme
+// another session's state in words, for a row with no bar: left-aligned in the bar's own width, in the bars' note type (12 px, regular, muted)
 const statusSvg = (word: string, W: number) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${TRACK_H}" viewBox="0 0 ${W} ${TRACK_H}"><style>.w{font:500 13px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}@media (prefers-color-scheme:dark){.w{fill:#A3A19A}}</style><text x="0" y="${TRACK_H / 2 + 4.5}" class="w">${esc(word)}</text></svg>`
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${TRACK_H}" viewBox="0 0 ${W} ${TRACK_H}"><style>.w{font:400 12px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}@media (prefers-color-scheme:dark){.w{fill:#A3A19A}}</style><text x="0" y="${TRACK_H / 2 + 4.5}" class="w">${esc(word)}</text></svg>`
 
 // what another session's main loop is doing, from the tool it runs now; an MCP tool goes by its server's name
 function toolLabel(tool?: string) {
@@ -503,13 +503,14 @@ function toolLabel(tool?: string) {
   return word[tool] ? `${word[tool]} · ${tool}` : tool
 }
 
-// a session that runs with no bar: a short track with a segment sweeping across it, then what it does now;
+// a session that runs with no bar: a short track with a segment sweeping across it in the style's running colour, then what
+// it does now, about where the other bars' notes start;
 // the source stays the same while the label does, so a redraw does not restart the sweep
-function runningSvg(label: string, W: number) {
-  const trackW = Math.round(Math.min(160, W * 0.4))
+function runningSvg(label: string, W: number, color: string) {
+  const trackW = Math.round(Math.min(110, W * 0.4))
   const seg = Math.round(trackW * 0.3)
   const y = TRACK_H / 2 - 2
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${TRACK_H}" viewBox="0 0 ${W} ${TRACK_H}"><style>.t{fill:#E2E0DA}.w{font:500 13px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}.sweep{animation:sw 1.4s ease-in-out infinite}@keyframes sw{from{transform:translateX(-${seg}px)}to{transform:translateX(${trackW}px)}}@media (prefers-color-scheme:dark){.t{fill:#3A3A38}.w{fill:#A3A19A}}@media (prefers-reduced-motion:reduce){.sweep{animation:none;transform:translateX(${Math.round((trackW - seg) / 2)}px)}}</style><clipPath id="c"><rect y="${y}" width="${trackW}" height="4" rx="2"/></clipPath><rect class="t" y="${y}" width="${trackW}" height="4" rx="2"/><g clip-path="url(#c)"><rect class="sweep" y="${y}" width="${seg}" height="4" rx="2" fill="${STATE_COLOR.running}"/></g><text x="${trackW + 12}" y="${TRACK_H / 2 + 4.5}" class="w">${esc(label)}</text></svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${TRACK_H}" viewBox="0 0 ${W} ${TRACK_H}"><style>.t{fill:#E2E0DA}.w{font:400 12px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}.sweep{animation:sw 1.4s ease-in-out infinite}@keyframes sw{from{transform:translateX(-${seg}px)}to{transform:translateX(${trackW}px)}}@media (prefers-color-scheme:dark){.t{fill:#3A3A38}.w{fill:#A3A19A}}@media (prefers-reduced-motion:reduce){.sweep{animation:none;transform:translateX(${Math.round((trackW - seg) / 2)}px)}}</style><clipPath id="c"><rect y="${y}" width="${trackW}" height="4" rx="2"/></clipPath><rect class="t" y="${y}" width="${trackW}" height="4" rx="2"/><g clip-path="url(#c)"><rect class="sweep" y="${y}" width="${seg}" height="4" rx="2" fill="${color}"/></g><text x="${trackW + 12}" y="${TRACK_H / 2 + 4.5}" class="w">${esc(label)}</text></svg>`
 }
 
 // a drawing placed in a fixed-height slot (centred or at the top), so previews of different heights take the same room
@@ -1435,7 +1436,10 @@ export const register: Register = on => {
             const p = r.bar ? { ...r.bar, state: r.state === 'needs_input' && r.bar.state === 'running' ? ('needs_input' as const) : r.bar.state } : null
             const drawn = p ? drawBar(style, p, trackW, now, null) : null
             const source = drawn ? (r.isLeaving ? fadeOut(drawn.svg, trackW, drawn.height) : drawn.svg) : ''
-            const glyph = p && look ? look.glyph(p) : { char: STATE_GLYPH[p?.state ?? asState], color: STATE_COLOR[p?.state ?? asState] }
+            // with no bar, the style still picks the glyph and its colour, from the session's state alone
+            const stub: Plan = { id: '', title: '', kind: 'plan', stages: [], state: asState, note: null, startedAt: 0 }
+            const glyph = look ? look.glyph(p ?? stub) : { char: STATE_GLYPH[p?.state ?? asState], color: STATE_COLOR[p?.state ?? asState] }
+            const runColor = (look?.glyph(stub) ?? null)?.color ?? STATE_COLOR.running
             const status = r.state === 'done' ? '跑完了' : r.state === 'needs_input' ? '等你決定' : '在跑'
             const w = p ? where(p) : null
             const pct = p && w ? (p.state === 'done' ? 100 : Math.round((Math.min(w.pos, w.total) / Math.max(1, w.total)) * 100)) : 0
@@ -1454,7 +1458,7 @@ export const register: Register = on => {
                     <Text dimColor>{textBar.replace(/━/g, '')}</Text>
                   </Text>
                 ) : Svg && r.state === 'working' ? (
-                  <Svg source={runningSvg(toolLabel(r.tool), trackW)} alt={`${awayTitle(r)}: ${toolLabel(r.tool)}`} width={trackW} height={TRACK_H} />
+                  <Svg source={runningSvg(toolLabel(r.tool), trackW, runColor)} alt={`${awayTitle(r)}: ${toolLabel(r.tool)}`} width={trackW} height={TRACK_H} />
                 ) : Svg ? (
                   // no bar to draw: the word sits where the bars start, in a drawing as wide as theirs
                   <Svg source={statusSvg(status, trackW)} alt={`${awayTitle(r)}: ${status}`} width={trackW} height={TRACK_H} />
