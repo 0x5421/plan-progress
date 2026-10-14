@@ -491,6 +491,27 @@ function plural(n: number, word: string) {
 const statusSvg = (word: string, W: number) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${TRACK_H}" viewBox="0 0 ${W} ${TRACK_H}"><style>.w{font:500 13px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}@media (prefers-color-scheme:dark){.w{fill:#A3A19A}}</style><text x="0" y="${TRACK_H / 2 + 4.5}" class="w">${esc(word)}</text></svg>`
 
+// what another session's main loop is doing, from the tool it runs now; an MCP tool goes by its server's name
+function toolLabel(tool?: string) {
+  if (!tool) return '處理中'
+  const mcp = /^mcp__(.+?)__/.exec(tool)
+  if (mcp) return `外部工具 · ${mcp[1]}`
+  const word: Record<string, string> = {
+    Bash: '執行指令', PowerShell: '執行指令', Read: '讀檔案', Edit: '改檔案', Write: '改檔案', MultiEdit: '改檔案', NotebookEdit: '改檔案',
+    Grep: '找檔案', Glob: '找檔案', Agent: '派 subagent', Task: '派 subagent', WebFetch: '查網路', WebSearch: '查網路', Skill: '用技能',
+  }
+  return word[tool] ? `${word[tool]} · ${tool}` : tool
+}
+
+// a session that runs with no bar: a short track with a segment sweeping across it, then what it does now;
+// the source stays the same while the label does, so a redraw does not restart the sweep
+function runningSvg(label: string, W: number) {
+  const trackW = Math.round(Math.min(160, W * 0.4))
+  const seg = Math.round(trackW * 0.3)
+  const y = TRACK_H / 2 - 2
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${TRACK_H}" viewBox="0 0 ${W} ${TRACK_H}"><style>.t{fill:#E2E0DA}.w{font:500 13px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}.sweep{animation:sw 1.4s ease-in-out infinite}@keyframes sw{from{transform:translateX(-${seg}px)}to{transform:translateX(${trackW}px)}}@media (prefers-color-scheme:dark){.t{fill:#3A3A38}.w{fill:#A3A19A}}@media (prefers-reduced-motion:reduce){.sweep{animation:none;transform:translateX(${Math.round((trackW - seg) / 2)}px)}}</style><clipPath id="c"><rect y="${y}" width="${trackW}" height="4" rx="2"/></clipPath><rect class="t" y="${y}" width="${trackW}" height="4" rx="2"/><g clip-path="url(#c)"><rect class="sweep" y="${y}" width="${seg}" height="4" rx="2" fill="${STATE_COLOR.running}"/></g><text x="${trackW + 12}" y="${TRACK_H / 2 + 4.5}" class="w">${esc(label)}</text></svg>`
+}
+
 // a drawing placed in a fixed-height slot (centred or at the top), so previews of different heights take the same room
 function inSlot(drawn: { svg: string; height: number }, W: number, slotH: number, align: 'center' | 'top'): { svg: string; height: number } {
   const dy = align === 'center' ? Math.max(0, (slotH - drawn.height) / 2) : 0
@@ -670,7 +691,7 @@ const fadeOut = (svg: string, W: number, H: number) =>
 
 // ---------- other sessions: each desktop session writes its status to a shared folder, every session reads the others ----------
 type SessionStatus = 'working' | 'done' | 'needs_input' | 'idle' | 'ended'
-type SessionFile = { v: 1; hostId: string; cwd: string; label: string; title?: string; state: SessionStatus; since: number; updatedAt: number; bars?: unknown[] }
+type SessionFile = { v: 1; hostId: string; cwd: string; label: string; title?: string; tool?: string; state: SessionStatus; since: number; updatedAt: number; bars?: unknown[] }
 const others = atom({ plugin: 'plan-progress', key: 'others' } as const, { rows: [] } as OthersView)
 const crossOn = atom({ plugin: 'plan-progress', key: 'crossSessions' } as const, true)
 const CROSS_STORE_KEY = 'crossSessions'
@@ -702,9 +723,10 @@ let appSessionsDir: string | null = null
 let appRecord: string | null = null
 let appTitle = ''
 const TITLE_EVERY = 60 // seconds between rereads of the title, which the app may set after the first turn
-let mine: { hostId: string; cwd: string; state: SessionStatus; since: number; lastPrompt: string } | null = null
+let mine: { hostId: string; cwd: string; state: SessionStatus; since: number; lastPrompt: string; tool: string } | null = null
 let lastBeat = 0
 let lastBars = ''
+let lastTool = ''
 // the desktop (or a phone) attaches to a session while it shows it and detaches when the person leaves it
 const viewers = new Set<string>()
 const isWaitingOnPerson = (s: SessionStatus) => s === 'done' || s === 'needs_input'
@@ -724,7 +746,8 @@ async function publish($: EngineInterface, state?: SessionStatus) {
   const bar = [...list].reverse().find(p => p.id !== AGENTS)
   const bars = barsOf(list)
   lastBars = JSON.stringify(bars)
-  const file: SessionFile = { v: 1, hostId: mine.hostId, cwd: mine.cwd, label: bar?.title || mine.lastPrompt, title: appTitle, state: mine.state, since: mine.since, updatedAt: now, bars }
+  lastTool = mine.tool
+  const file: SessionFile = { v: 1, hostId: mine.hostId, cwd: mine.cwd, label: bar?.title || mine.lastPrompt, title: appTitle, tool: mine.tool, state: mine.state, since: mine.since, updatedAt: now, bars }
   await $.fs.write(`${sessionsDir}/${mine.hostId}.json`, JSON.stringify(file)).catch(() => undefined)
   // the person is looking at this session as it finishes: the other sessions need not show it
   if (state && isWaitingOnPerson(state) && viewers.size > 0) await writeSeen($, mine.hostId, mine.since)
@@ -812,6 +835,7 @@ async function pollOthers($: EngineInterface) {
       label: str(f.label, 60),
       state: f.state as OtherSession['state'],
       since: f.since,
+      ...(typeof f.tool === 'string' && f.tool ? { tool: str(f.tool, 60) } : {}),
       ...(bar ? { bar } : {}),
       ...(leavingAway.has(f.hostId) ? { isLeaving: true } : {}),
     })
@@ -944,6 +968,8 @@ export const register: Register = on => {
       if (waiting.delete(agentId)) await editAgent($, agentId, a => (a.state === 'waiting' ? { ...a, state: 'running' } : a))
       return ran
     }
+    // the tool the main loop runs now, which other sessions show beside a session that has no bar
+    if (mine && e.tool !== TOOL) mine.tool = e.tool
     if (!WORK_TOOLS.has(e.tool)) return next(e)
     isWaitingOnBackground = (e as unknown as Raw).run_in_background === true
     const hasLivePlan = isPlanTouched || (await read($, plans)).some(isOpenPlan)
@@ -1028,18 +1054,19 @@ export const register: Register = on => {
     const hostId = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID')
     if (home) sessionsDir = `${home}/.claude/plan-progress/sessions`
     if (home) appSessionsDir = `${home}/Library/Application Support/Claude/claude-code-sessions`
-    if (hostId && HOST_ID.test(hostId)) mine = { hostId, cwd: await $.session.cwd(), state: 'idle', since: await $.clock.now(), lastPrompt: '' }
+    if (hostId && HOST_ID.test(hostId)) mine = { hostId, cwd: await $.session.cwd(), state: 'idle', since: await $.clock.now(), lastPrompt: '', tool: '' }
     await refreshTitle($)
     $.clock.every(1000, async () => {
       // a bar that moved reaches the other sessions within a second; a working session also beats every 30 s
-      const isBarMoved = mine !== null && JSON.stringify(barsOf(await read($, plans))) !== lastBars
+      const isBarMoved = mine !== null && (JSON.stringify(barsOf(await read($, plans))) !== lastBars || mine.tool !== lastTool)
       if (isBarMoved || (mine?.state === 'working' && (await $.clock.now()) - lastBeat >= HEARTBEAT_MS)) await publish($)
       pollCount += 1
       if (pollCount % POLL_EVERY === 0 && (await read($, crossOn))) await pollOthers($)
       if (pollCount % TITLE_EVERY === 0 && (await refreshTitle($))) await publish($)
       // the hairline style shows elapsed time, so it redraws every second while a bar runs
       const isTiming = (await styleOf($)) === 'hairline' && (await read($, plans)).some(p => p.state !== 'done')
-      if (isTiming || agentHome.size > 0 || (await $.clock.now()) < foldUntil) await update($, tick, n => n + 1)
+      const isAwayTiming = (await read($, crossOn)) && (await read($, others)).rows.some(r => r.state === 'working' && !r.bar)
+      if (isTiming || isAwayTiming || agentHome.size > 0 || (await $.clock.now()) < foldUntil) await update($, tick, n => n + 1)
     })
     await $.command.register({ name: 'progress', description: 'Show or hide the progress bars' })
     await $.command.register({ name: 'progress-style', description: 'Switch the progress bar style (no argument lists them, "next" cycles)' })
@@ -1338,7 +1365,9 @@ export const register: Register = on => {
       return look && Svg ? look.right(p, now) : `${String(pct).padStart(3, FIGURE_SPACE)}%`
     }
     // one cell more than the longest text: a cell is about 8 px, a wide letter (m, %) a little more than one
-    const rightCells = 1 + Math.max(4, ...list.map(p => rightOf(p).length), ...shownAway.flatMap(r => (r.bar ? [rightOf(r.bar).length] : [])))
+    // a running session with no bar shows how long it has run there instead
+    const awayRight = (r: OtherSession) => (r.bar ? rightOf(r.bar) : r.state === 'working' ? elapsed(now - r.since) : '')
+    const rightCells = 1 + Math.max(4, ...list.map(p => rightOf(p).length), ...shownAway.map(r => awayRight(r).length))
     // a hairline between task bars, so each bar and its agent strips read as one group
     const lineW = total - frameSlack
     const divider = `<svg xmlns="http://www.w3.org/2000/svg" width="${lineW}" height="1"><rect width="${lineW}" height="1" fill="#808080" fill-opacity=".22"/></svg>`
@@ -1412,14 +1441,16 @@ export const register: Register = on => {
                     <Text color={STATE_COLOR[p.state]}>{textBar.replace(/─/g, '')}</Text>
                     <Text dimColor>{textBar.replace(/━/g, '')}</Text>
                   </Text>
+                ) : Svg && r.state === 'working' ? (
+                  <Svg source={runningSvg(toolLabel(r.tool), trackW)} alt={`${awayTitle(r)}: ${toolLabel(r.tool)}`} width={trackW} height={TRACK_H} />
                 ) : Svg ? (
                   // no bar to draw: the word sits where the bars start, in a drawing as wide as theirs
                   <Svg source={statusSvg(status, trackW)} alt={`${awayTitle(r)}: ${status}`} width={trackW} height={TRACK_H} />
                 ) : (
-                  <Text dimColor>{status}</Text>
+                  <Text dimColor>{r.state === 'working' ? toolLabel(r.tool) : status}</Text>
                 )}
                 <Box width={rightCells} justifyContent="flex-end">
-                  <Text dimColor>{p ? rightOf(p) : ''}</Text>
+                  <Text dimColor>{awayRight(r)}</Text>
                 </Box>
                 {/* a running session always shows, so it has no ✕; the empty cell keeps its bar in line */}
                 <Box width={CLOSE_CELLS} justifyContent="center">
@@ -1543,6 +1574,7 @@ export const register: Register = on => {
       }
       // what the other sessions show: a reply ending in a question waits on the person; an interrupted turn shows nothing
       const isAsking = /[?？]\s*$/.test(e.answer ?? '')
+      if (mine) mine.tool = ''
       await refreshTitle($)
       await publish($, e.reason !== 'answer' ? 'idle' : isAsking ? 'needs_input' : 'done')
     }
