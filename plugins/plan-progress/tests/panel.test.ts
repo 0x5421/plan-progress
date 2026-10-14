@@ -734,3 +734,24 @@ test('another session is named by its app title; without one, by its project (no
   expect(JSON.stringify(await above.drawn())).not.toContain('intelligent-sanderson')
   await above.unmount()
 })
+
+test('a row with no bar shows its state where the bars start, as wide as a bar', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  const workBar = { id: 'b', title: '跑參數矩陣', kind: 'plan', stages: [{ name: 'Run', steps: [{ title: 'a', status: 'active' }] }], state: 'running', note: null, startedAt: NOW - 5_000 }
+  fs.put(sid(1), 'done', NOW - 60_000, { title: '績效統計支援ETH、BASE鏈' })
+  fs.put(sid(2), 'working', NOW - 10_000, { title: '任務停止監控優化', bars: [workBar] })
+  await start($)
+  await clock.advance(2000)
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  const svgs = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '')
+  const word = svgs.find((el: any) => String(el.props.alt).includes('績效統計'))
+  const bar = svgs.find((el: any) => String(el.props.alt).includes('任務停止'))
+  expect(String(word?.props.source)).toContain('>跑完了</text>')
+  expect(String(word?.props.source)).toContain('<text x="0"')
+  expect(word?.props.width).toBe(bar?.props.width)
+  // not a loose word pushed to the right edge
+  expect(await above.find({ type: 'Text', text: '跑完了' })).toBeUndefined()
+  await above.unmount()
+})

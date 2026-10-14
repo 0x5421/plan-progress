@@ -487,6 +487,10 @@ function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? '' : 's'}`
 }
 
+// another session's state in words, for a row with no bar: left-aligned in the bar's own width, muted in either scheme
+const statusSvg = (word: string, W: number) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${TRACK_H}" viewBox="0 0 ${W} ${TRACK_H}"><style>.w{font:500 13px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}@media (prefers-color-scheme:dark){.w{fill:#A3A19A}}</style><text x="0" y="${TRACK_H / 2 + 4.5}" class="w">${esc(word)}</text></svg>`
+
 // a drawing placed in a fixed-height slot (centred or at the top), so previews of different heights take the same room
 function inSlot(drawn: { svg: string; height: number }, W: number, slotH: number, align: 'center' | 'top'): { svg: string; height: number } {
   const dy = align === 'center' ? Math.max(0, (slotH - drawn.height) / 2) : 0
@@ -1401,6 +1405,9 @@ export const register: Register = on => {
                     <Text color={STATE_COLOR[p.state]}>{textBar.replace(/─/g, '')}</Text>
                     <Text dimColor>{textBar.replace(/━/g, '')}</Text>
                   </Text>
+                ) : Svg ? (
+                  // no bar to draw: the word sits where the bars start, in a drawing as wide as theirs
+                  <Svg source={statusSvg(status, trackW)} alt={`${awayTitle(r)}: ${status}`} width={trackW} height={TRACK_H} />
                 ) : (
                   <Text dimColor>{status}</Text>
                 )}
