@@ -787,9 +787,8 @@ for (const surface of ['desktop', 'terminal'] as const) {
     const list = await both.find({ key: 'away-list' })
     expect(JSON.stringify(list)).toContain(`switch-${sid(1)}`)
     expect(list?.props.paddingX).toBe(surface === 'terminal' ? 2 : 1)
-    // on the desktop the other rows get a frame line that does not show, so they start where the framed rows start
-    if (surface === 'desktop') expect(list?.props).toMatchObject({ borderStyle: 'round', borderColor: 'transparent' })
-    else expect(list?.props.borderStyle).toBeUndefined()
+    // the other sessions have no frame line around them (a "transparent" one shows black on the desktop)
+    expect(list?.props.borderStyle).toBeUndefined()
     // this session's name, as the other sessions show it, sits on the frame's top line and takes no row of its own
     const name = await both.find({ key: 'frame-name' })
     expect(name?.props).toMatchObject({ position: 'absolute', top: -1 })

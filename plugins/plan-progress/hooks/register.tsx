@@ -1571,17 +1571,12 @@ export const register: Register = on => {
                 </Box>
                 {ownRows}
               </Box>,
-              // the other sessions keep the frame's inset, without its line, so their bars stay under the framed ones;
-              // on the desktop the frame's 1 px line pushes the framed rows right, so these get a line that does not show
-              e.surface === 'terminal' ? (
-                <Box key="away-list" flexDirection="column" gap={1} paddingX={FRAME_INSET + 1}>
-                  {awayRows}
-                </Box>
-              ) : (
-                <Box key="away-list" flexDirection="column" gap={1} paddingX={FRAME_INSET} borderStyle="round" borderColor="transparent">
-                  {awayRows}
-                </Box>
-              ),
+              // the other sessions keep the frame's inset, without its line, so their bars stay under the framed ones
+              // (on the desktop they sit 1 px left of the framed rows, the frame's line; a border coloured "transparent"
+              // to match it is drawn black there, 0.5.54)
+              <Box key="away-list" flexDirection="column" gap={1} paddingX={e.surface === 'terminal' ? FRAME_INSET + 1 : FRAME_INSET}>
+                {awayRows}
+              </Box>,
             ]
           : [...ownRows, ...awayRows]}
       </Box>
