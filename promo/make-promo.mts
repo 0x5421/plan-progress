@@ -1,6 +1,6 @@
 // Renders the landscape promo (1920x1080, 60 fps, about 46 s) frame by frame with the plugin's own drawing code,
 // captures each frame in headless Chrome over the DevTools protocol, then joins them with ffmpeg.
-// Run: node --experimental-strip-types promo/make-promo.mts [outDir] [--stills=8,20,30]
+// Run: node --experimental-strip-types promo/make-promo.mts [outDir] [--stills=8,20,30] [--music=promo/music/inspired-ambient.mp3 --music-at=35]
 // --stills writes only those moments as PNGs into outDir/stills, to check a layout without the full render.
 // The beats follow the usual launch-video shape: a problem in one line, the name, three to five feature demos of a few
 // seconds each with one caption and one cue (a zoom or the cursor) at a time, then one call to action. No voice: the
@@ -13,7 +13,7 @@ import { STYLES, setAccent } from '../plugins/plan-progress/hooks/styles.ts'
 type StyleKey = keyof typeof STYLES
 // the glyph, the running row, the status word and the frame's name are drawn in register.tsx, which only runs in
 // Claude Code; those functions and the constants they read are lifted from it, so the video draws what the plugin draws
-function lift(): { glyphSvg: (c: string, col: string) => string; runningSvg: (l: string, W: number, col: string) => string; statusSvg: (w: string, W: number) => string; frameNameSvg: (s: string) => { svg: string; width: number }; FRAME_NAME_H: number; FRAME_ROW_PX: number } {
+function lift(): { glyphSvg: (c: string, col: string) => string; runningSvg: (l: string, W: number, col: string) => string; statusSvg: (w: string, W: number) => string; frameNameSvg: (s: string) => { svg: string; width: number }; FRAME_NAME_H: number; FRAME_ROW_PX: number; FRAME_NAME_X: number } {
   const src = readFileSync(new URL('../plugins/plan-progress/hooks/register.tsx', import.meta.url), 'utf8')
   const pick = (re: RegExp) => {
     const m = src.match(re)
@@ -37,9 +37,10 @@ function lift(): { glyphSvg: (c: string, col: string) => string; runningSvg: (l:
     block('function runningSvg('),
     pick(/^const FRAME_ROW_PX = .*$/m),
     pick(/^const FRAME_NAME_H = .*$/m),
+    pick(/^const FRAME_NAME_X = .*$/m),
     block('function frameNameSvg('),
   ]
-  return new Function(`${stripTypeScriptTypes(parts.join('\n'))}\nreturn { glyphSvg, runningSvg, statusSvg, frameNameSvg, FRAME_NAME_H, FRAME_ROW_PX }`)()
+  return new Function(`${stripTypeScriptTypes(parts.join('\n'))}\nreturn { glyphSvg, runningSvg, statusSvg, frameNameSvg, FRAME_NAME_H, FRAME_ROW_PX, FRAME_NAME_X }`)()
 }
 const P = lift()
 
@@ -99,7 +100,8 @@ const scopeIds = (svg: string) => {
   const k = `d${drawingN++}-`
   return svg.replace(/\bid="([^"]+)"/g, `id="${k}$1"`).replace(/url\(#([^)]+)\)/g, `url(#${k}$1)`).replace(/href="#([^"]+)"/g, `href="#${k}$1"`)
 }
-// Claude Code swaps in a new picture whenever the plugin redraws and its animations start over; data-start marks that
+// Claude Code swaps in a new picture whenever the plugin redraws and its animations start over; data-start marks that.
+// Both kinds of animation are seeked to each frame's time: SMIL (setCurrentTime) and CSS (the running row's sweep)
 const drawnAt = (start: number, svg: string) => `<g data-start="${start}">${scopeIds(svg)}</g>`
 const lastOf = (t: number, times: number[]) => Math.max(...times.filter(x => x <= t), 0)
 const NOW0 = 1_790_000_000_000
@@ -326,9 +328,9 @@ function band(t: number, which: Which, hot: string | null): string {
     const fy = L.ownTop - L.framePad * 0.6
     const fh = L.ownH + L.framePad * 1.2
     parts.push(`<rect x="-8" y="${fy}" width="${ROW_R + 8}" height="${fh}" rx="10" fill="none" stroke="#000" stroke-opacity="${0.16 * v.appear}" stroke-width="1"/>`)
-    // this session's name on the frame's top line, the plugin's own drawing
+    // this session's name on the frame's top line, the plugin's own drawing, its letters where the titles start (x 18)
     const name = P.frameNameSvg(SESSIONS[which].title)
-    parts.push(`<g opacity="${v.appear}" transform="translate(6 ${fy - P.FRAME_ROW_PX})">${name.svg}</g>`)
+    parts.push(`<g opacity="${v.appear}" transform="translate(${18 - P.FRAME_NAME_X} ${fy - P.FRAME_ROW_PX})">${name.svg}</g>`)
   }
   parts.push(glyph ? `<g transform="translate(0 ${cyOwn - 8})">${P.glyphSvg(glyph.char, glyph.color)}</g>` : '')
   parts.push(text(18, cyOwn + 4.5, p.title, 13))
@@ -700,7 +702,7 @@ async function capture(): Promise<void> {
     for (const [f, t] of times.entries()) {
       const svg = frame(t)
       const ran = await send('Runtime.evaluate', {
-        expression: `(() => { document.body.innerHTML = ${JSON.stringify(svg)}; const all = [...document.querySelectorAll('svg')]; const tick = () => new Promise(r => requestAnimationFrame(() => r())); return tick().then(tick).then(() => { for (const s of all) { const at = s.closest('[data-start]'); s.pauseAnimations(); s.setCurrentTime(Math.max(0, ${t} - (at ? Number(at.dataset.start) : 0))) } return tick().then(tick) }).then(() => all.length) })()`,
+        expression: `(() => { document.body.innerHTML = ${JSON.stringify(svg)}; const all = [...document.querySelectorAll('svg')]; const tick = () => new Promise(r => requestAnimationFrame(() => r())); return tick().then(tick).then(() => { for (const s of all) { const at = s.closest('[data-start]'); s.pauseAnimations(); s.setCurrentTime(Math.max(0, ${t} - (at ? Number(at.dataset.start) : 0))) } for (const a of document.getAnimations()) { const el = a.effect && a.effect.target; const at = el && el.closest('[data-start]'); a.pause(); a.currentTime = Math.max(0, ${t} - (at ? Number(at.dataset.start) : 0)) * 1000 } return tick().then(tick) }).then(() => all.length) })()`,
         awaitPromise: true,
         returnByValue: true,
       })
@@ -740,9 +742,9 @@ function soundtrack(): Float32Array[] {
     return Float32Array.from({ length: (buf.length - at) >> 1 }, (_, i) => buf.readInt16LE(at + i * 2) / 32768)
   }
   const click = () => highpass(make(0.04, t => (noise() * 0.6 + Math.sin(2 * Math.PI * 2400 * t)) * env(t, 0.0005, 0.006)), 900)
-  // the music goes in first, under everything: written here, not taken from anywhere, so the clip carries no licence
+  // the music goes in first, under everything: a track from --music, or the one written here when none is given
   if (!NO_MUSIC) {
-    const [mL, mR] = music(n)
+    const [mL, mR] = MUSIC_FILE ? track(n) : music(n)
     for (let i = 0; i < n; i++) (L[i] += mL[i]), (R[i] += mR[i])
   }
   for (const c of CLICKS) add(c, click(), 0.45)
@@ -754,6 +756,31 @@ function soundtrack(): Float32Array[] {
 // a quiet, warm loop at 96 bpm: a soft pad on Cmaj7, Am7, Fmaj7, G6, a plucked arpeggio from the title on, a low
 // soft kick and a light shaker once the demos start, a lift on the end card; it ducks under the done sound and fades out
 const NO_MUSIC = args.includes('--no-music')
+// --music=<file> plays a track instead, from --music-at=<seconds> into it, so its own ending lands on the end card.
+// Used: "Inspired Ambient" by Playsound, https://pixabay.com/music/corporate-inspired-ambient-141686/ (Pixabay
+// Content License: free to use in a video, no attribution needed; the file itself is not committed), at 35s
+const MUSIC_FILE = args.find(a => a.startsWith('--music='))?.slice('--music='.length) ?? null
+const MUSIC_AT = Number(args.find(a => a.startsWith('--music-at='))?.slice('--music-at='.length) ?? 0)
+const MUSIC_GAIN = 0.5
+function track(n: number): Float32Array[] {
+  const raw = execFileSync('ffmpeg', ['-v', 'error', '-ss', String(MUSIC_AT), '-i', MUSIC_FILE as string, '-ac', '2', '-ar', String(SR), '-f', 'f32le', '-'], { maxBuffer: 1 << 30 })
+  const pcm = new Float32Array(raw.buffer, raw.byteOffset, raw.length >> 2)
+  const L = new Float32Array(n)
+  const R = new Float32Array(n)
+  for (let i = 0; i < n && 2 * i + 1 < pcm.length; i++) {
+    const g = MUSIC_GAIN * level(i / SR)
+    L[i] = pcm[2 * i] * g
+    R[i] = pcm[2 * i + 1] * g
+  }
+  return [L, R]
+}
+// the level over time: in from silence, under the done sound for a moment, out over the last seconds
+function level(t: number) {
+  const fadeIn = Math.min(1, t / 1.5)
+  const fadeOut = Math.min(1, (DURATION - t) / 3)
+  const duck = 1 - 0.6 * Math.max(0, Math.min(1, (t - (T.allDone - 0.15)) / 0.15)) * Math.max(0, Math.min(1, (T.allDone + 1.6 - t) / 0.5))
+  return fadeIn * Math.max(0, fadeOut) * duck
+}
 function music(n: number): Float32Array[] {
   const L = new Float32Array(n)
   const R = new Float32Array(n)
@@ -839,13 +866,8 @@ function music(n: number): Float32Array[] {
   }
   // a bell on the title and on the end card
   for (const at of [T.titleIn, T.endIn]) for (const m of [72, 76, 79, 84]) pluck(at + (m - 72) * 0.012, m, 0.07, 0)
-  // the level over time: in from silence, under the done sound for a moment, out over the last seconds
   for (let i = 0; i < n; i++) {
-    const t = i / SR
-    const fadeIn = Math.min(1, t / 1.5)
-    const fadeOut = Math.min(1, (DURATION - t) / 3)
-    const duck = 1 - 0.6 * Math.max(0, Math.min(1, (t - (T.allDone - 0.15)) / 0.15)) * Math.max(0, Math.min(1, (T.allDone + 1.6 - t) / 0.5))
-    const g = fadeIn * Math.max(0, fadeOut) * duck
+    const g = level(i / SR)
     L[i] *= g
     R[i] *= g
   }

@@ -2,3 +2,5 @@ tsconfig.json
 .claude-plugin/types/
 promo/out/
 promo/out-v2/
+# licensed tracks are mixed into the videos but not redistributed as files
+promo/music/
