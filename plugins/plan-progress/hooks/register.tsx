@@ -1333,25 +1333,27 @@ export const register: Register = on => {
           {Svg ? [<Svg key="agents-preview" source={agentsDrawn.svg} alt={`subagents ${view} preview`} width={W} height={agentsDrawn.height} />] : []}
         </Box>
 
-        {/* the running colour for every style: each choice a dot of its colour beside its name; the tiles below redraw in it */}
+        {/* the running colour for every style: each choice is a button holding a dot of its colour, the picked one's name
+            after the row; the tiles below redraw in it */}
         <Box flexDirection="column" gap={1}>
           <Text bold>顏色</Text>
           <Box key="accent-row" flexDirection="row" alignItems="center" gap={1} flexWrap="wrap">
             {['', ...ACCENT_IDS].map(id => {
               const isPicked = id === pickedAccent
-              const dot = id && isAccentId(id) ? ACCENT_INFO[id].glyph : null
-              return (
-                <Box key={`accent-${id || 'own'}`} flexDirection="row" alignItems="center" gap={1}>
-                  {dot && Svg ? [<Svg key="dot" source={`<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"><circle cx="6" cy="6" r="5" fill="${dot}"/></svg>`} alt="" width={12} height={12} />] : []}
-                  <Button
-                    key={`use-accent-${id || 'own'}`}
-                    variant={isPicked ? 'primary' : 'secondary'}
-                    label={id && isAccentId(id) ? ACCENT_INFO[id].name : '跟樣式預設'}
-                    onPress={() => (isPicked ? undefined : setAccentChoice($, id))}
-                  />
-                </Box>
+              const pick = () => (isPicked ? undefined : setAccentChoice($, id))
+              const key = `use-accent-${id || 'own'}`
+              const variant = isPicked ? 'primary' : 'secondary'
+              return id && isAccentId(id) ? (
+                <Button key={key} variant={variant} onPress={pick}>
+                  <Text color={ACCENT_INFO[id].glyph}>●</Text>
+                </Button>
+              ) : (
+                <Button key={key} variant={variant} label="跟樣式預設" onPress={pick} />
               )
             })}
+            <Box key="accent-name">
+              <Text dimColor>{isAccentId(pickedAccent) ? ACCENT_INFO[pickedAccent].name : '各樣式自己的顏色'}</Text>
+            </Box>
           </Box>
         </Box>
 

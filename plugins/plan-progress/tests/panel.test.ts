@@ -967,7 +967,13 @@ test('the pane picks a colour, saved, and the bars redraw in it', async ($, on) 
   const props = { title: '進度條樣式', isFocused: true, bodyColumns: 50, placement: 'dock', scroll: SCROLL }
   const ui = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'Pane', requestId: PANE, props: props as never })
   expect((await ui.find({ key: 'use-accent-own' }))?.props.variant).toBe('primary')
+  // each colour is a button holding a dot of that colour, not a word; the picked one's name follows the row
+  const teal = await ui.find({ key: 'use-accent-teal' })
+  expect(teal?.text).toBe('●')
+  expect(JSON.stringify(teal)).toContain('"color":"#14A3A8"')
+  expect((await ui.find({ key: 'accent-name' }))?.text).toBe('各樣式自己的顏色')
   await ui.press({ key: 'use-accent-pink' })
+  expect((await ui.find({ key: 'accent-name' }))?.text).toBe('桃紅')
   expect(host.store.get('accent')).toBe('pink')
   expect((await ui.find({ key: 'use-accent-pink' }))?.props.variant).toBe('primary')
   const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
