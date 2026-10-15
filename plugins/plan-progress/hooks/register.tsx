@@ -769,7 +769,8 @@ const FRAME_ROW_PX = 20
 const FRAME_NAME_H = 2 * FRAME_ROW_PX
 function frameNameSvg(text: string) {
   // 10 px letters, smaller than the rows' titles; textWidth measures 12 px ones
-  const width = Math.round((textWidth(text, 7.5) * 10) / 12 + 12)
+  // a font with wider CJK letters than the estimate cut the name's end (seen in the promo's renderer), so leave room
+  const width = Math.round(((textWidth(text, 7.5) * 10) / 12) * 1.15 + 16)
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${FRAME_NAME_H}" viewBox="0 0 ${width} ${FRAME_NAME_H}"><style>.b{fill:#F0F0F0}.w{font:500 10px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}@media (prefers-color-scheme:dark){.b{fill:#2B2B29}.w{fill:#A3A19A}}</style><rect class="b" y="${FRAME_ROW_PX - 7}" width="${width}" height="14"/><text x="6" y="${FRAME_ROW_PX + 3.5}" class="w">${esc(text)}</text></svg>`
   return { text, svg, width }
 }
