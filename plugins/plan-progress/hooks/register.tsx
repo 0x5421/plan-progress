@@ -517,6 +517,9 @@ function plural(n: number, word: string) {
 // the state glyph left of a title, drawn in a box of one width with its mark at the middle: as letters, ● ? ! ✓
 // are each a different width, so the titles after them did not start at one place
 const GLYPH_W = 12
+// what a glyph says to a reader that cannot see it; a desktop draws no Svg whose alt is empty (0.5.41-0.5.49 drew the
+// glyphs and the colour dots with none, and they did not show)
+const GLYPH_WORD: Record<string, string> = { '●': '進行中', '?': '等你決定', '!': '出錯', '✓': '完成' }
 const GLYPH_H = 16
 function glyphSvg(char: string, color: string, isDim = false) {
   const c = GLYPH_W / 2
@@ -1347,7 +1350,7 @@ export const register: Register = on => {
                 : null
               return (
                 <Box key={`accent-${id || 'own'}`} flexDirection="row" alignItems="center" gap={1}>
-                  {dot && Svg ? [<Svg key="dot" source={dot} alt="" width={20} height={20} />] : []}
+                  {dot && Svg && isAccentId(id) ? [<Svg key="dot" source={dot} alt={`顏色：${ACCENT_INFO[id].name}`} width={20} height={20} />] : []}
                   <Button
                     key={`use-accent-${id || 'own'}`}
                     variant={isPicked ? 'primary' : 'secondary'}
@@ -1433,7 +1436,7 @@ export const register: Register = on => {
     // the desktop draws the glyph in a box of one width; a terminal's cells already line it up
     const glyphCell = (gl: { char: string; color: string }, isDim?: boolean) =>
       Svg && e.surface !== 'terminal' ? (
-        <Svg key="glyph" source={glyphSvg(gl.char, gl.color, isDim)} alt="" width={GLYPH_W} height={GLYPH_H} />
+        <Svg key="glyph" source={glyphSvg(gl.char, gl.color, isDim)} alt={`狀態：${GLYPH_WORD[gl.char] ?? gl.char}`} width={GLYPH_W} height={GLYPH_H} />
       ) : (
         <Text key="glyph" color={gl.color} dimColor={isDim}>
           {gl.char}

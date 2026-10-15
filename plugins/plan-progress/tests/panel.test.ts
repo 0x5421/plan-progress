@@ -1,6 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 const SCROLL = { offset: 0, bodyRows: 40 }
+// a bar's drawing, not a state glyph (alt 狀態：…) or a colour dot (alt 顏色：…)
+const isBarAlt = (a: unknown) => a !== '' && !String(a).startsWith('狀態：') && !String(a).startsWith('顏色：')
 
 // the engine's own answers beneath the plugin: a fixed clock, an in-memory store, an empty drawing
 function engine(on: any, opts: { clock?: boolean; saved?: Record<string, unknown> } = {}) {
@@ -70,7 +72,7 @@ for (const surface of ['desktop', 'terminal'] as const) {
     const bars = async () => {
       const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: props as never })
       // the bars, not the state glyphs beside them (drawn with no alt)
-      const n = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '').length
+      const n = (await above.findAll({ type: 'Svg' })).filter((el: any) => isBarAlt(el.props.alt)).length
       await above.unmount()
       return n
     }
@@ -176,7 +178,7 @@ test('desktop: every style draws the bar above the prompt', async ($, on) => {
     const answer = await $.command.run({ command: 'progress-style', args: id })
     expect(JSON.stringify(answer)).toContain(id)
     const ui = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: props as never })
-    const svg = (await ui.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '')
+    const svg = (await ui.findAll({ type: 'Svg' })).filter((el: any) => isBarAlt(el.props.alt))
     expect(svg.length).toBe(1)
     // the ⚙ lives in the footer only, not on the bar row
     expect(await ui.find({ key: 'style-demo' })).toBeUndefined()
@@ -207,7 +209,7 @@ test('the person\'s next message fades finished bars out, then removes them; run
     const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: props as never })
     const tree = JSON.stringify(await above.drawn())
     // bar drawings only: the hairline divider between two bars is an Svg with an empty alt
-    const rows = (await above.findAll({ type: 'Svg' })).filter(el => el.props.alt !== '').map(el => String(el.props.source).includes('pp-leave'))
+    const rows = (await above.findAll({ type: 'Svg' })).filter(el => isBarAlt(el.props.alt)).map(el => String(el.props.source).includes('pp-leave'))
     await above.unmount()
     return { tree, rows }
   }
@@ -229,7 +231,7 @@ const ABOVE = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 12
 const PANE_PROPS = { title: '進度條樣式', isFocused: true, bodyColumns: 50, placement: 'dock', scroll: SCROLL }
 const barCount = async ($: any) => {
   const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
-  const n = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '').length
+  const n = (await above.findAll({ type: 'Svg' })).filter((el: any) => isBarAlt(el.props.alt)).length
   await above.unmount()
   return n
 }
@@ -291,7 +293,7 @@ function turns(on: any) {
 const END = { answer: 'report', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as const
 const barAlt = async ($: any) => {
   const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
-  const alts = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '').map((el: any) => String(el.props.alt))
+  const alts = (await above.findAll({ type: 'Svg' })).filter((el: any) => isBarAlt(el.props.alt)).map((el: any) => String(el.props.alt))
   await above.unmount()
   return alts
 }
@@ -668,7 +670,7 @@ test('opening a session fades its finished bars out; running bars stay', async (
   const look = async () => {
     const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
     const tree = JSON.stringify(await above.drawn())
-    const rows = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '').map((el: any) => String(el.props.source).includes('pp-leave'))
+    const rows = (await above.findAll({ type: 'Svg' })).filter((el: any) => isBarAlt(el.props.alt)).map((el: any) => String(el.props.source).includes('pp-leave'))
     await above.unmount()
     return { tree, rows }
   }
@@ -750,7 +752,7 @@ test('a row with no bar shows its state where the bars start, as wide as a bar',
   await start($)
   await clock.advance(2000)
   const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
-  const svgs = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt !== '')
+  const svgs = (await above.findAll({ type: 'Svg' })).filter((el: any) => isBarAlt(el.props.alt))
   const word = svgs.find((el: any) => String(el.props.alt).includes('績效統計'))
   const bar = svgs.find((el: any) => String(el.props.alt).includes('任務停止'))
   expect(String(word?.props.source)).toContain('>跑完了</text>')
@@ -837,7 +839,7 @@ test('a running session with no bar shows a sweeping track, what it does now and
   // the words use the bars' note type, and the sweep and the dot take the style's running colour (segments: clay)
   expect(String(svgOf(1)?.props.source)).toContain('font:400 12px')
   expect(String(svgOf(1)?.props.source)).toContain('fill="#D97757"')
-  expect((await above.findAll({ type: 'Svg' })).some((el: any) => el.props.alt === '' && String(el.props.source).includes('fill="#D97757"'))).toBe(true)
+  expect((await above.findAll({ type: 'Svg' })).some((el: any) => String(el.props.alt).startsWith('狀態：') && String(el.props.source).includes('fill="#D97757"'))).toBe(true)
   expect(String(svgOf(2)?.props.alt)).toBe('2-proj · task 2: 處理中')
   expect(String(svgOf(3)?.props.alt)).toBe('3-proj · task 3: 外部工具 · memelab')
   const tree = JSON.stringify(await above.drawn())
@@ -978,7 +980,7 @@ test('the pane picks a colour, saved, and the bars redraw in it', async ($, on) 
   expect(host.store.get('accent')).toBe('pink')
   expect((await ui.find({ key: 'use-accent-pink' }))?.props.variant).toBe('primary')
   const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
-  const bar = (await above.findAll({ type: 'Svg' })).find((el: any) => el.props.alt !== '')
+  const bar = (await above.findAll({ type: 'Svg' })).find((el: any) => isBarAlt(el.props.alt))
   expect(String(bar?.props.source)).toContain('--clay:#B83A78')
   await above.unmount()
   await ui.press({ key: 'use-accent-own' })
@@ -997,7 +999,7 @@ test('desktop: every state glyph is drawn in one width, so the titles after them
   await $.tool.call({ tool: TOOL, id: 'mine', title: 'mine', stages: STAGES } as never)
   await clock.advance(2000)
   const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
-  const glyphs = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt === '' && String(el.props.source).includes('width="12"'))
+  const glyphs = (await above.findAll({ type: 'Svg' })).filter((el: any) => String(el.props.alt).startsWith('狀態：') && String(el.props.source).includes('width="12"'))
   expect(glyphs.length).toBe(4)
   expect(new Set(glyphs.map((el: any) => `${el.props.width}x${el.props.height}`)).size).toBe(1)
   await above.unmount()
@@ -1077,7 +1079,7 @@ test('the bar row reads the active step, not the first open one', async ($, on) 
   ] } as never)
   await $.tool.call({ tool: TOOL, id: 'sol', done: ['改門檻'], active: '回撤拆解' } as never)
   const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
-  const alt = String((await above.findAll({ type: 'Svg' })).find((el: any) => el.props.alt !== '')?.props.alt)
+  const alt = String((await above.findAll({ type: 'Svg' })).find((el: any) => isBarAlt(el.props.alt))?.props.alt)
   expect(alt).toContain('SOL: SOL, step 1 of 1')
   await above.unmount()
 })
@@ -1087,4 +1089,23 @@ test('segments: a step left behind inside the current stage is outlined, and the
   expect((svg.match(/stroke-dasharray/g) ?? []).length).toBe(1)
   // the name is light over the finished first step
   expect(svg).toContain('fill="url(#t0)"')
+})
+
+test('desktop: every drawing a person should see carries a description, since a desktop draws no Svg whose alt is empty', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  fs.put(sid(1), 'done', NOW - 60_000)
+  fs.put(sid(2), 'working', NOW - 10_000)
+  await start($)
+  await $.tool.call({ tool: TOOL, id: 'mine', title: 'mine', stages: STAGES } as never)
+  await $.tool.call({ tool: TOOL, id: 'two', title: 'two', stages: STAGES } as never)
+  await clock.advance(2000)
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  const pane = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'Pane', requestId: PANE, props: PANE_PROPS as never })
+  // the 1 px divider between bars is the one decoration
+  const blank = [...(await above.findAll({ type: 'Svg' })), ...(await pane.findAll({ type: 'Svg' }))].filter((el: any) => el.props.alt === '' && el.props.height !== 1)
+  expect(blank).toHaveLength(0)
+  await above.unmount()
+  await pane.unmount()
 })
