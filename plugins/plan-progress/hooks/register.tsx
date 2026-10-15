@@ -44,8 +44,12 @@ const setCollapsed = async ($: EngineInterface, collapsed: boolean) => {
   await update($, isCollapsed, () => collapsed)
   await $.store.set(COLLAPSED_STORE_KEY, collapsed)
 }
-// the fold button left of the gear: ▴ folds the band to one row, ▾ and the number of rows hidden opens it again
+// the fold button: ⌃ folds the band to nothing but ⌄ and the number of rows hidden, which opens it again. On the desktop ⌃ sits
+// at the middle of the band's top edge, one row up out of the tree; a terminal has no room above, so there it takes a
+// column left of the gear
 const FOLD_CELLS = 5
+const FOLD_UP = '⌃'
+const FOLD_DOWN = '⌄'
 // the pane that lists every style with a live preview; opened from the ⚙ beside the Progress button
 const STYLE_PANE = 'plan-progress-styles'
 const STYLE_PANE_TITLE = '進度條樣式'
@@ -785,9 +789,17 @@ function frameNameSvg(text: string) {
   // a font with wider CJK letters than the estimate cut the name's end (seen in the promo's renderer), so leave room
   const textW = Math.round(((textWidth(text, 7.5) * 10) / 12) * 1.15)
   const width = FRAME_NAME_X + textW + 10
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${FRAME_NAME_H}" viewBox="0 0 ${width} ${FRAME_NAME_H}"><style>.b{fill:#F0F0F0}.w{font:500 10px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}@media (prefers-color-scheme:dark){.b{fill:#2B2B29}.w{fill:#A3A19A}}</style><rect class="b" x="${FRAME_NAME_X - 6}" y="${FRAME_ROW_PX - 7}" width="${width - FRAME_NAME_X + 6}" height="14"/><text x="${FRAME_NAME_X}" y="${FRAME_ROW_PX + 3.5}" class="w">${esc(text)}</text></svg>`
+  // the line is hidden by a halo of the band's grey round the letters (a stroke painted under them), so the gap
+  // fits the name as drawn on both sides; a background sized from the estimate left a wider gap on the right (0.5.62)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${FRAME_NAME_H}" viewBox="0 0 ${width} ${FRAME_NAME_H}"><style>.w{font:500 10px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C;stroke:#F0F0F0;stroke-width:12px;stroke-linejoin:round;paint-order:stroke}@media (prefers-color-scheme:dark){.w{fill:#A3A19A;stroke:#2B2B29}}</style><text x="${FRAME_NAME_X}" y="${FRAME_ROW_PX + 3.5}" class="w">${esc(text)}</text></svg>`
   return { text, svg, width }
 }
+// the band's grey, painted as the fold button's own background so the frame's line has a gap there; the button is
+// its content, drawn over it (a drawing of the grey placed beside the button hid it, 0.5.59-0.5.60). A Box takes one
+// raw colour, so the theme setting picks it: the desktop's light grey, measured, and its dark one, a guess
+const BAND_GREY = { light: '#F0F0F0', dark: '#2B2B29' }
+// read from the theme setting when the session starts
+let isDarkTheme = false
 const POLL_EVERY = 2 // seconds between reads of the shared folder
 let sessionsDir: string | null = null
 // the app's own record of each desktop session, which holds the title its sessions list shows
@@ -1124,6 +1136,7 @@ export const register: Register = on => {
     if (typeof savedShown === 'boolean') await update($, isOpen, () => savedShown)
     const savedSounds = await $.store.get(SOUNDS_STORE_KEY)
     if (typeof savedSounds === 'boolean') await update($, soundsOn, () => savedSounds)
+    isDarkTheme = String((await $.config.list()).find(row => row.key === 'theme')?.value ?? '').includes('dark')
     const savedCollapsed = await $.store.get(COLLAPSED_STORE_KEY)
     if (typeof savedCollapsed === 'boolean') await update($, isCollapsed, () => savedCollapsed)
     const savedCross = await $.store.get(CROSS_STORE_KEY)
@@ -1419,20 +1432,25 @@ export const register: Register = on => {
       return name ? `${r.folder} · ${name}` : r.folder
     }
     if ((list.length === 0 && !hasAway) || e.props.hasSurvey || !(await read($, isOpen))) return next(e)
-    // folded, the band keeps one row: what waits on the person or failed (this session's first), else this session's
-    // newest bar, else the first other session; the fold button says how many rows it hides
+    // folded, the band holds no rows: only a button at its middle that opens it, saying how many rows it hides
+    // (0.5.56-0.5.61 kept one row; with the button on the band's top edge that row ran under it)
     const rowCount = list.length + away.rows.length
     const canFold = rowCount > 1
     const isFolded = canFold && (await read($, isCollapsed))
-    const urgentOwn = list.find(p => p.state === 'needs_input' || p.state === 'error')
-    const urgentAway = away.rows.find(r => r.state === 'needs_input')
-    const foldedOwn = urgentOwn ?? (urgentAway ? undefined : list[list.length - 1])
-    const ownShown = isFolded ? (foldedOwn ? [foldedOwn] : []) : list
-    const awayShown = isFolded ? (foldedOwn ? [] : [urgentAway ?? away.rows[0]]) : shownAway
+    const ownShown = list
+    const awayShown = shownAway
     const t = $.ui.resolve(e)
     const { Box, Button, Text } = t
     const Svg = 'Svg' in t ? t.Svg : null
-    const total = Math.max(320, ((e.props.bodyColumns || 100) - GEAR_CELLS - (canFold ? FOLD_CELLS : 0)) * 8)
+    if (isFolded) {
+      return (
+        <Box key="band-fold" flexDirection="row" justifyContent="center" flexGrow={1}>
+          <Button key="band-fold-button" plain dimColor label={`${FOLD_DOWN} ${rowCount}`} onPress={() => setCollapsed($, false)} />
+        </Box>
+      )
+    }
+    const foldBeside = canFold && e.surface === 'terminal'
+    const total = Math.max(320, ((e.props.bodyColumns || 100) - GEAR_CELLS - (foldBeside ? FOLD_CELLS : 0)) * 8)
     // every bar has the same width and is pinned to the right edge (fixed-width percent, close button),
     // so rows line up whatever their titles; the slack goes into the gap after the title.
     // Desktop reports ~8 CSS px per column; glyph, gaps, percent and the close button take ~126 px.
@@ -1571,9 +1589,13 @@ export const register: Register = on => {
               </Box>
             )
           }),
-          ...(!isFolded && away.rows.length > MAX_OTHERS ? [<Text key="away-more" dimColor>{`還有 ${away.rows.length - MAX_OTHERS} 個 session`}</Text>] : []),
+          ...(away.rows.length > MAX_OTHERS ? [<Text key="away-more" dimColor>{`還有 ${away.rows.length - MAX_OTHERS} 個 session`}</Text>] : []),
         ]
 
+    const foldLabel = FOLD_UP
+    const foldButton = <Button key="band-fold-button" plain dimColor label={foldLabel} onPress={() => setCollapsed($, true)} />
+    // the cells the button and the grey behind it take: its label and a cell either side
+    const foldCells = foldLabel.length + 2
     // the rows, and the gear at the top right in a column of its own beside them, so it takes no row
     return (
       <Box flexDirection="row" alignItems="flex-start">
@@ -1602,9 +1624,19 @@ export const register: Register = on => {
           : [...ownRows, ...awayRows]}
       </Box>
       {canFold ? (
-        <Box key="band-fold" width={FOLD_CELLS} justifyContent="flex-end">
-          <Button key="band-fold-button" plain dimColor label={isFolded ? `▾ ${rowCount - 1}` : '▴'} onPress={() => setCollapsed($, !isFolded)} />
-        </Box>
+        foldBeside ? (
+          <Box key="band-fold" width={FOLD_CELLS} justifyContent="flex-end">
+            {foldButton}
+          </Box>
+        ) : (
+          // one row up the button showed only its bottom, cut by the band's edge (0.5.57); two rows tall from there with
+          // the button at its middle, as the frame's name is drawn, its middle sits on the tree's top edge
+          <Box key="band-fold" position="absolute" top={-1} height={2} width={foldCells} flexDirection="column" justifyContent="center" alignItems="center" left={Math.max(0, Math.floor((e.props.bodyColumns || 100) / 2) - Math.floor(foldCells / 2))}>
+            <Box key="band-fold-front" width={foldCells} justifyContent="center" backgroundColor={isDarkTheme ? BAND_GREY.dark : BAND_GREY.light}>
+              {foldButton}
+            </Box>
+          </Box>
+        )
       ) : (
         []
       )}

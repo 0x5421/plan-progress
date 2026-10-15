@@ -1,11 +1,11 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 const SCROLL = { offset: 0, bodyRows: 40 }
-// a bar's drawing, not a state glyph (alt 狀態：…) or a colour dot (alt 顏色：…)
-const isBarAlt = (a: unknown) => a !== '' && !String(a).startsWith('狀態：') && !String(a).startsWith('顏色：')
+// a bar's drawing, not a state glyph (alt 狀態：…), a colour dot (alt 顏色：…) or the grey behind the fold button (收合：…)
+const isBarAlt = (a: unknown) => a !== '' && !String(a).startsWith('狀態：') && !String(a).startsWith('顏色：') && !String(a).startsWith('收合：')
 
 // the engine's own answers beneath the plugin: a fixed clock, an in-memory store, an empty drawing
-function engine(on: any, opts: { clock?: boolean; saved?: Record<string, unknown> } = {}) {
+function engine(on: any, opts: { clock?: boolean; saved?: Record<string, unknown>; theme?: string } = {}) {
   // what earlier sessions saved
   const store = new Map<string, unknown>(Object.entries(opts.saved ?? {}))
   const played: string[] = []
@@ -18,6 +18,8 @@ function engine(on: any, opts: { clock?: boolean; saved?: Record<string, unknown
     on('clock.every', () => ({ value: undefined }))
     on('clock.after', () => ({ value: undefined }))
   }
+  // the /config rows the plugin reads: the theme, light unless a test says otherwise
+  on('config.list', () => ({ value: [{ key: 'theme', value: opts.theme ?? 'light' }] }))
   on('store.get', (_$: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_$: unknown, e: { key: string; value: unknown }) => {
     store.set(e.key, e.value)
@@ -641,7 +643,7 @@ test('every row keeps its ✕ cell, so a running row without a ✕ keeps its bar
   const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
   expect(await above.find({ key: `seen-${sid(1)}` })).toBeDefined()
   expect(await above.find({ key: `seen-${sid(2)}` })).toBeUndefined()
-  const cells = (await above.findAll({ type: 'Box' })).filter((el: any) => el.props.width === 3 && el.props.justifyContent === 'center')
+  const cells = (await above.findAll({ type: 'Box' })).filter((el: any) => el.props.width === 3 && el.props.justifyContent === 'center' && el.props.key !== 'band-fold' && el.props.key !== 'band-fold-front')
   expect(cells.length).toBe(3)
   await above.unmount()
 })
@@ -797,63 +799,56 @@ for (const surface of ['desktop', 'terminal'] as const) {
       // the desktop puts a Box one row up about 20 px above the line: the drawing is two rows tall, the name at its middle
       const svg = await both.find({ type: 'Svg', alt: '日曆實測＋行李公斤' })
       expect(svg?.props.height).toBe(40)
-      // the name starts where the titles start, past the glyph's column; its background covers only the letters,
-      // so the line shows from the frame's corner up to the name
-      expect(String(svg?.props.source)).toContain('<rect class="b" x="21" y="13"')
+      // the name starts where the titles start, past the glyph's column; a halo of the band's grey round the letters
+      // hides the line, so the gap is as wide on the right as on the left, and the line shows up to the name
       expect(String(svg?.props.source)).toContain('<text x="27" y="23.5"')
+      expect(String(svg?.props.source)).toContain('stroke:#F0F0F0;stroke-width:12px')
+      expect(String(svg?.props.source)).toContain('paint-order:stroke')
+      expect(String(svg?.props.source)).not.toContain('<rect')
     }
     await both.unmount()
   })
 }
 
-test('the fold button keeps one row, the one that waits on the person first, and a new session starts folded', async ($, on) => {
+test('the fold button folds the band to a lone button that opens it, and the choice is saved', async ($, on) => {
   const host = engine(on, { clock: false })
   const clock = mock.clock(on, { now: NOW })
   const fs = hostFs(on)
   await start($)
   await $.tool.call({ tool: TOOL, id: 'mine', title: 'mine', stages: STAGES } as never)
   const mount = () => $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  const has = async (ui: any, key: string) => (await ui.find({ key })) !== undefined
   // one row: nothing to fold, no button
   const alone = await mount()
-  expect(await alone.find({ key: 'band-fold-button' })).toBeUndefined()
+  expect(await has(alone, 'band-fold-button')).toBe(false)
   await alone.unmount()
   fs.put(sid(1), 'working', NOW - 10_000, { title: '其他一' })
-  fs.put(sid(2), 'done', NOW - 20_000, { title: '其他二' })
+  fs.put(sid(2), 'needs_input', NOW - 20_000, { title: '其他二' })
   await clock.advance(2000)
   const open = await mount()
-  expect((await open.find({ key: 'band-fold-button' }))?.props.label).toBe('▴')
-  expect(await open.find({ key: 'own-frame' })).toBeDefined()
+  expect((await open.find({ key: 'band-fold-button' }))?.props.label).toBe('⌃')
+  // on the desktop it sits on the band's top edge, at its middle, and takes no row or column
+  expect((await open.find({ key: 'band-fold' }))?.props).toMatchObject({ position: 'absolute', top: -1, height: 2, justifyContent: 'center', width: 3, left: Math.floor(ABOVE.bodyColumns / 2) - 1 })
+  // the band's grey is the button's own background, so the frame's line has a gap there and the button is drawn over it
+  expect((await open.find({ key: 'band-fold-front' }))?.props).toMatchObject({ backgroundColor: '#F0F0F0', width: 3 })
   await open.press({ key: 'band-fold-button' })
   await open.unmount()
   expect(host.store.get('collapsed')).toBe(true)
-  // folded: this session's newest bar alone, no frame, and the button counts the rows it hides
+  // folded: no rows at all, not even the one waiting on the person; one button, the rows it hides, in the band's middle
   const folded = await mount()
-  const has = async (ui: any, key: string) => (await ui.find({ key })) !== undefined
-  expect(await has(folded, 'title-mine')).toBe(true)
-  expect(await has(folded, `switch-${sid(1)}`)).toBe(false)
-  expect(await has(folded, `switch-${sid(2)}`)).toBe(false)
-  expect(await folded.find({ key: 'own-frame' })).toBeUndefined()
-  expect((await folded.find({ key: 'band-fold-button' }))?.props.label).toBe('▾ 2')
+  for (const key of ['title-mine', `switch-${sid(1)}`, `switch-${sid(2)}`, 'own-frame', 'progress-style']) expect(await has(folded, key)).toBe(false)
+  expect((await folded.find({ key: 'band-fold-button' }))?.props.label).toBe('⌄ 3')
+  expect((await folded.find({ key: 'band-fold' }))?.props.justifyContent).toBe('center')
+  await folded.press({ key: 'band-fold-button' })
   await folded.unmount()
-  // another session waiting on the person takes the one row
-  fs.put(sid(3), 'needs_input', NOW - 5_000, { title: '等你決定的' })
-  await clock.advance(2000)
-  const waiting = await mount()
-  expect(await has(waiting, `switch-${sid(3)}`)).toBe(true)
-  expect(await has(waiting, 'title-mine')).toBe(false)
-  await waiting.unmount()
-  // pressed again, every row is back
-  const again = await mount()
-  await again.press({ key: 'band-fold-button' })
-  await again.unmount()
   expect(host.store.get('collapsed')).toBe(false)
+  // opened again, every row is back
   const all = await mount()
-  for (const n of [1, 2, 3]) expect(await has(all, `switch-${sid(n)}`)).toBe(true)
-  expect(await has(all, 'title-mine')).toBe(true)
+  for (const key of ['title-mine', `switch-${sid(1)}`, `switch-${sid(2)}`]) expect(await has(all, key)).toBe(true)
 })
 
 test('a session started after the band was folded opens folded', async ($, on) => {
-  engine(on, { clock: false, saved: { collapsed: true } })
+  engine(on, { clock: false, saved: { collapsed: true }, theme: 'dark-daltonized' })
   const clock = mock.clock(on, { now: NOW })
   const fs = hostFs(on)
   await start($)
@@ -861,8 +856,17 @@ test('a session started after the band was folded opens folded', async ($, on) =
   fs.put(sid(1), 'working', NOW - 10_000, { title: '其他一' })
   await clock.advance(2000)
   const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'terminal', component: 'AbovePrompt', props: ABOVE as never })
-  expect((await above.find({ key: 'band-fold-button' }))?.props.label).toBe('▾ 1')
+  expect((await above.find({ key: 'band-fold-button' }))?.props.label).toBe('⌄ 2')
   expect(await above.find({ key: `switch-${sid(1)}` })).toBeUndefined()
+  await above.press({ key: 'band-fold-button' })
+  await above.unmount()
+  // opened: a terminal has no room above the band, so ⌃ takes a column beside the gear there
+  const opened = await $.ui.mount({ plugin: 'plan-progress', surface: 'terminal', component: 'AbovePrompt', props: ABOVE as never })
+  expect((await opened.find({ key: 'band-fold' }))?.props.position).toBeUndefined()
+  await opened.unmount()
+  // a dark theme gives the desktop's ⌃ the dark grey
+  const desk = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  expect((await desk.find({ key: 'band-fold-front' }))?.props.backgroundColor).toBe('#2B2B29')
 })
 
 test('a session publishes the tool its main loop runs now, and clears it when the turn ends', async ($, on) => {
