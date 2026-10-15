@@ -967,13 +967,14 @@ test('the pane picks a colour, saved, and the bars redraw in it', async ($, on) 
   const props = { title: '進度條樣式', isFocused: true, bodyColumns: 50, placement: 'dock', scroll: SCROLL }
   const ui = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'Pane', requestId: PANE, props: props as never })
   expect((await ui.find({ key: 'use-accent-own' }))?.props.variant).toBe('primary')
-  // each colour is a button holding a dot of that colour, not a word; the picked one's name follows the row
-  const teal = await ui.find({ key: 'use-accent-teal' })
-  expect(teal?.text).toBe('●')
-  expect(JSON.stringify(teal)).toContain('"color":"#14A3A8"')
-  expect((await ui.find({ key: 'accent-name' }))?.text).toBe('各樣式自己的顏色')
+  // a desktop's native button ignores a colour inside it: each choice is a drawn dot of its colour beside a named button
+  expect((await ui.find({ key: 'use-accent-teal' }))?.text).toBe('青')
+  const dotOf = async (id: string) => String((await ui.find({ key: `accent-${id}` }))?.children?.[0]?.props?.source ?? JSON.stringify(await ui.find({ key: `accent-${id}` })))
+  expect(await dotOf('teal')).toContain('#14A3A8')
   await ui.press({ key: 'use-accent-pink' })
-  expect((await ui.find({ key: 'accent-name' }))?.text).toBe('桃紅')
+  // the picked dot gets a ring
+  expect(await dotOf('pink')).toContain('stroke="#D0548F"')
+  expect(await dotOf('teal')).not.toContain('stroke=')
   expect(host.store.get('accent')).toBe('pink')
   expect((await ui.find({ key: 'use-accent-pink' }))?.props.variant).toBe('primary')
   const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
