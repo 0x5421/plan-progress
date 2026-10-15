@@ -787,6 +787,9 @@ for (const surface of ['desktop', 'terminal'] as const) {
     const list = await both.find({ key: 'away-list' })
     expect(JSON.stringify(list)).toContain(`switch-${sid(1)}`)
     expect(list?.props.paddingX).toBe(surface === 'terminal' ? 2 : 1)
+    // on the desktop the other rows get a frame line that does not show, so they start where the framed rows start
+    if (surface === 'desktop') expect(list?.props).toMatchObject({ borderStyle: 'round', borderColor: 'transparent' })
+    else expect(list?.props.borderStyle).toBeUndefined()
     // this session's name, as the other sessions show it, sits on the frame's top line and takes no row of its own
     const name = await both.find({ key: 'frame-name' })
     expect(name?.props).toMatchObject({ position: 'absolute', top: -1 })
@@ -795,8 +798,10 @@ for (const surface of ['desktop', 'terminal'] as const) {
       // the desktop puts a Box one row up about 20 px above the line: the drawing is two rows tall, the name at its middle
       const svg = await both.find({ type: 'Svg', alt: '日曆實測＋行李公斤' })
       expect(svg?.props.height).toBe(40)
-      expect(String(svg?.props.source)).toContain('<rect class="b" y="13"')
-      expect(String(svg?.props.source)).toContain('<text x="6" y="23.5"')
+      // the name starts where the titles start, past the glyph's column; its background covers only the letters,
+      // so the line shows from the frame's corner up to the name
+      expect(String(svg?.props.source)).toContain('<rect class="b" x="21" y="13"')
+      expect(String(svg?.props.source)).toContain('<text x="27" y="23.5"')
     }
     await both.unmount()
   })

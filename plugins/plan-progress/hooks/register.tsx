@@ -767,11 +767,16 @@ const FRAME_INSET = 1
 // FRAME_ROW_PX above the line (measured on a screenshot), so the drawing is two rows tall and the name sits at its middle
 const FRAME_ROW_PX = 20
 const FRAME_NAME_H = 2 * FRAME_ROW_PX
+// the name starts where the rows' titles start, past the glyph's column: the titles start about this far right of where
+// the name's drawing is placed (one cell in), measured on a screenshot; the line shows left of the name, its background
+// only hides the line behind the letters
+const FRAME_NAME_X = 27
 function frameNameSvg(text: string) {
   // 10 px letters, smaller than the rows' titles; textWidth measures 12 px ones
   // a font with wider CJK letters than the estimate cut the name's end (seen in the promo's renderer), so leave room
-  const width = Math.round(((textWidth(text, 7.5) * 10) / 12) * 1.15 + 16)
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${FRAME_NAME_H}" viewBox="0 0 ${width} ${FRAME_NAME_H}"><style>.b{fill:#F0F0F0}.w{font:500 10px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}@media (prefers-color-scheme:dark){.b{fill:#2B2B29}.w{fill:#A3A19A}}</style><rect class="b" y="${FRAME_ROW_PX - 7}" width="${width}" height="14"/><text x="6" y="${FRAME_ROW_PX + 3.5}" class="w">${esc(text)}</text></svg>`
+  const textW = Math.round(((textWidth(text, 7.5) * 10) / 12) * 1.15)
+  const width = FRAME_NAME_X + textW + 10
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${FRAME_NAME_H}" viewBox="0 0 ${width} ${FRAME_NAME_H}"><style>.b{fill:#F0F0F0}.w{font:500 10px 'Anthropic Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;fill:#73726C}@media (prefers-color-scheme:dark){.b{fill:#2B2B29}.w{fill:#A3A19A}}</style><rect class="b" x="${FRAME_NAME_X - 6}" y="${FRAME_ROW_PX - 7}" width="${width - FRAME_NAME_X + 6}" height="14"/><text x="${FRAME_NAME_X}" y="${FRAME_ROW_PX + 3.5}" class="w">${esc(text)}</text></svg>`
   return { text, svg, width }
 }
 const POLL_EVERY = 2 // seconds between reads of the shared folder
@@ -1566,10 +1571,17 @@ export const register: Register = on => {
                 </Box>
                 {ownRows}
               </Box>,
-              // the other sessions keep the frame's inset, without its line, so their bars stay under the framed ones
-              <Box key="away-list" flexDirection="column" gap={1} paddingX={e.surface === 'terminal' ? FRAME_INSET + 1 : FRAME_INSET}>
-                {awayRows}
-              </Box>,
+              // the other sessions keep the frame's inset, without its line, so their bars stay under the framed ones;
+              // on the desktop the frame's 1 px line pushes the framed rows right, so these get a line that does not show
+              e.surface === 'terminal' ? (
+                <Box key="away-list" flexDirection="column" gap={1} paddingX={FRAME_INSET + 1}>
+                  {awayRows}
+                </Box>
+              ) : (
+                <Box key="away-list" flexDirection="column" gap={1} paddingX={FRAME_INSET} borderStyle="round" borderColor="transparent">
+                  {awayRows}
+                </Box>
+              ),
             ]
           : [...ownRows, ...awayRows]}
       </Box>
