@@ -791,6 +791,10 @@ for (const surface of ['desktop', 'terminal'] as const) {
     expect(list?.props.paddingX).toBe(surface === 'terminal' ? 2 : 1)
     // the other sessions have no frame line around them (a "transparent" one shows black on the desktop)
     expect(list?.props.borderStyle).toBeUndefined()
+    // on the desktop a few px under the frame, not a whole row, so the first other session sits as close as the rows below
+    const gap = (await both.findAll({ type: 'Svg' })).find((el: any) => el.props.alt === '間距')
+    if (surface === 'desktop') expect(gap?.props.height).toBe(6)
+    else expect(gap).toBeUndefined()
     // this session's name, as the other sessions show it, sits on the frame's top line and takes no row of its own
     const name = await both.find({ key: 'frame-name' })
     expect(name?.props).toMatchObject({ position: 'absolute', top: -1 })

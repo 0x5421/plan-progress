@@ -775,6 +775,8 @@ const CLOSE_CELLS = 3
 // (a terminal draws the border as a whole cell, so there the rows under it move in one cell more)
 const FRAME_PX = 24
 const FRAME_INSET = 1
+// the space between the frame and the other sessions under it on the desktop, in px (a row's gap was too much)
+const FRAME_GAP_PX = 6
 // the name on the frame's top line: its background is the desktop's grey band (measured in the light theme; the dark one
 // is a guess), so the line does not show through the letters. The desktop places a Box one row up (top: -1) about
 // FRAME_ROW_PX above the line (measured on a screenshot), so the drawing is two rows tall and the name sits at its middle
@@ -1592,6 +1594,10 @@ export const register: Register = on => {
           ...(away.rows.length > MAX_OTHERS ? [<Text key="away-more" dimColor>{`還有 ${away.rows.length - MAX_OTHERS} 個 session`}</Text>] : []),
         ]
 
+    // on the desktop a whole row's gap under the frame left the first other session further from the framed bar than the
+    // rows below it are from each other (41 px against 31, measured); no gap and a few px of nothing there instead
+    const frameGapPx = isFramed && Svg && e.surface !== 'terminal' ? FRAME_GAP_PX : null
+    const frameGapSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${FRAME_GAP_PX}"/>`
     const foldLabel = FOLD_UP
     const foldButton = <Button key="band-fold-button" plain dimColor label={foldLabel} onPress={() => setCollapsed($, true)} />
     // the cells the button and the grey behind it take: its label and a cell either side
@@ -1599,7 +1605,7 @@ export const register: Register = on => {
     // the rows, and the gear at the top right in a column of its own beside them, so it takes no row
     return (
       <Box flexDirection="row" alignItems="flex-start">
-      <Box flexDirection="column" gap={1} flexGrow={1}>
+      <Box flexDirection="column" gap={frameGapPx === null ? 1 : 0} flexGrow={1}>
         {isFramed
           ? [
               <Box key="own-frame" flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
@@ -1614,6 +1620,7 @@ export const register: Register = on => {
                 </Box>
                 {ownRows}
               </Box>,
+              ...(frameGapPx === null ? [] : [<Svg key="frame-gap" source={frameGapSvg} alt="間距" width={1} height={frameGapPx} />]),
               // the other sessions keep the frame's inset, without its line, so their bars stay under the framed ones
               // (on the desktop they sit 1 px left of the framed rows, the frame's line; a border coloured "transparent"
               // to match it is drawn black there, 0.5.54)
