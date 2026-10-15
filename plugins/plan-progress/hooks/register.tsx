@@ -776,7 +776,9 @@ const CLOSE_CELLS = 3
 const FRAME_PX = 24
 const FRAME_INSET = 1
 // the space between the frame and the other sessions under it on the desktop, in px (a row's gap was too much)
-const FRAME_GAP_PX = 6
+const FRAME_GAP_PX = 2
+// the space between rows on the desktop, in px: a row's gap (about 10 px) spread them out; no gap and this instead
+const ROW_GAP_PX = 5
 // the name on the frame's top line: its background is the desktop's grey band (measured in the light theme; the dark one
 // is a guess), so the line does not show through the letters. The desktop places a Box one row up (top: -1) about
 // FRAME_ROW_PX above the line (measured on a screenshot), so the drawing is two rows tall and the name sits at its middle
@@ -1444,6 +1446,8 @@ export const register: Register = on => {
     const t = $.ui.resolve(e)
     const { Box, Button, Text } = t
     const Svg = 'Svg' in t ? t.Svg : null
+    // on the desktop rows are spaced in px (ROW_GAP_PX, FRAME_GAP_PX), not in whole rows as in a terminal
+    const isTight = Boolean(Svg) && e.surface !== 'terminal'
     if (isFolded) {
       return (
         <Box key="band-fold" flexDirection="row" justifyContent="center" flexGrow={1}>
@@ -1458,7 +1462,8 @@ export const register: Register = on => {
     // Desktop reports ~8 CSS px per column; glyph, gaps, percent and the close button take ~126 px.
     const titleWidth = Math.min(
       Math.round(total * 0.4),
-      Math.max(0, ...list.map(p => Math.round(textWidth(p.title, 6.4))), ...shownAway.map(r => Math.round(textWidth(awayTitle(r), 6.4)))),
+      // rounded up: rounded to the nearest, a title of 91.2 px got a 91 px column and fitTitle cut its last letter (0.5.68)
+      Math.max(0, ...list.map(p => Math.ceil(textWidth(p.title, 6.4))), ...shownAway.map(r => Math.ceil(textWidth(awayTitle(r), 6.4)))),
     )
     // a button label cannot truncate itself, so every title is cut to the title column here
     const fitTitle = (s: string) => {
@@ -1508,7 +1513,8 @@ export const register: Register = on => {
           const source = isLeaving ? fadeOut(drawn.svg, trackW, drawn.height) : drawn.svg
           const glyph = look ? look.glyph(p) : { char: STATE_GLYPH[p.state], color: STATE_COLOR[p.state] }
           const agentsAlt = v ? `; agents: ${(p.agents ?? []).map(a => `${a.title} ${a.state}`).join(', ')}` : ''
-          const line = i > 0 && Svg ? [<Svg key={`div-${p.id}`} source={divider} alt="" width={lineW} height={1} />] : []
+          // the desktop draws no Svg with an empty alt, so there the line only took room: a second gap between two bars
+          const line = i > 0 && Svg && !isTight ? [<Svg key={`div-${p.id}`} source={divider} alt="" width={lineW} height={1} />] : []
           const w = where(p)
           const pct = p.state === 'done' ? 100 : Math.round((Math.min(w.pos, w.total) / Math.max(1, w.total)) * 100)
           const color = STATE_COLOR[p.state]
@@ -1598,6 +1604,11 @@ export const register: Register = on => {
     // rows below it are from each other (41 px against 31, measured); no gap and a few px of nothing there instead
     const frameGapPx = isFramed && Svg && e.surface !== 'terminal' ? FRAME_GAP_PX : null
     const frameGapSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${FRAME_GAP_PX}"/>`
+    // the desktop puts ROW_GAP_PX of nothing between rows instead of a row's gap; a terminal keeps its whole-row gap
+    const rowGap = isTight ? 0 : 1
+    const rowGapSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${ROW_GAP_PX}"/>`
+    const spaced = (group: string, items: JSX.Element[]) =>
+      isTight && Svg ? items.flatMap((item, i) => (i === 0 ? [item] : [<Svg key={`${group}-gap-${i}`} source={rowGapSvg} alt="間距：列" width={1} height={ROW_GAP_PX} />, item])) : items
     const foldLabel = FOLD_UP
     const foldButton = <Button key="band-fold-button" plain dimColor label={foldLabel} onPress={() => setCollapsed($, true)} />
     // the cells the button and the grey behind it take: its label and a cell either side
@@ -1605,10 +1616,10 @@ export const register: Register = on => {
     // the rows, and the gear at the top right in a column of its own beside them, so it takes no row
     return (
       <Box flexDirection="row" alignItems="flex-start">
-      <Box flexDirection="column" gap={frameGapPx === null ? 1 : 0} flexGrow={1}>
+      <Box flexDirection="column" gap={isFramed ? (frameGapPx === null ? 1 : 0) : rowGap} flexGrow={1}>
         {isFramed
           ? [
-              <Box key="own-frame" flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
+              <Box key="own-frame" flexDirection="column" gap={rowGap} borderStyle="round" borderDimColor paddingX={1}>
                 {/* this session's name, the one the other sessions show for it, sits on the frame's top line: on the
                     desktop its drawing's background hides the line behind it, a terminal writes the letters over the line's cells */}
                 <Box key="frame-name" position="absolute" top={-1} left={1}>
@@ -1618,17 +1629,17 @@ export const register: Register = on => {
                     <Text dimColor>{` ${frameName.text} `}</Text>
                   )}
                 </Box>
-                {ownRows}
+                {spaced('own', ownRows)}
               </Box>,
-              ...(frameGapPx === null ? [] : [<Svg key="frame-gap" source={frameGapSvg} alt="間距" width={1} height={frameGapPx} />]),
+              ...(frameGapPx === null ? [] : [<Svg key="frame-gap" source={frameGapSvg} alt="間距：外框" width={1} height={frameGapPx} />]),
               // the other sessions keep the frame's inset, without its line, so their bars stay under the framed ones
               // (on the desktop they sit 1 px left of the framed rows, the frame's line; a border coloured "transparent"
               // to match it is drawn black there, 0.5.54)
-              <Box key="away-list" flexDirection="column" gap={1} paddingX={e.surface === 'terminal' ? FRAME_INSET + 1 : FRAME_INSET}>
-                {awayRows}
+              <Box key="away-list" flexDirection="column" gap={rowGap} paddingX={e.surface === 'terminal' ? FRAME_INSET + 1 : FRAME_INSET}>
+                {spaced('away', awayRows)}
               </Box>,
             ]
-          : [...ownRows, ...awayRows]}
+          : spaced('rows', [...ownRows, ...awayRows])}
       </Box>
       {canFold ? (
         foldBeside ? (

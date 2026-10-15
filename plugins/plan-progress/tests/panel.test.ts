@@ -1,8 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 const SCROLL = { offset: 0, bodyRows: 40 }
-// a bar's drawing, not a state glyph (alt 狀態：…), a colour dot (alt 顏色：…) or the grey behind the fold button (收合：…)
-const isBarAlt = (a: unknown) => a !== '' && !String(a).startsWith('狀態：') && !String(a).startsWith('顏色：') && !String(a).startsWith('收合：')
+// a bar's drawing, not a state glyph (alt 狀態：…), a colour dot (顏色：…), the grey behind the fold button (收合：…) or a spacer (間距：…)
+const isBarAlt = (a: unknown) => a !== '' && !['狀態：', '顏色：', '收合：', '間距：'].some(p => String(a).startsWith(p))
 
 // the engine's own answers beneath the plugin: a fixed clock, an in-memory store, an empty drawing
 function engine(on: any, opts: { clock?: boolean; saved?: Record<string, unknown>; theme?: string } = {}) {
@@ -792,8 +792,8 @@ for (const surface of ['desktop', 'terminal'] as const) {
     // the other sessions have no frame line around them (a "transparent" one shows black on the desktop)
     expect(list?.props.borderStyle).toBeUndefined()
     // on the desktop a few px under the frame, not a whole row, so the first other session sits as close as the rows below
-    const gap = (await both.findAll({ type: 'Svg' })).find((el: any) => el.props.alt === '間距')
-    if (surface === 'desktop') expect(gap?.props.height).toBe(6)
+    const gap = (await both.findAll({ type: 'Svg' })).find((el: any) => el.props.alt === '間距：外框')
+    if (surface === 'desktop') expect(gap?.props.height).toBe(2)
     else expect(gap).toBeUndefined()
     // this session's name, as the other sessions show it, sits on the frame's top line and takes no row of its own
     const name = await both.find({ key: 'frame-name' })
@@ -863,6 +863,50 @@ test('with no bar of this session own there is no frame, and no grey behind the 
   expect(await above.find({ key: 'own-frame' })).toBeUndefined()
   expect((await above.find({ key: 'band-fold-button' }))?.props.label).toBe('⌃')
   expect((await above.find({ key: 'band-fold-front' }))?.props.backgroundColor).toBeUndefined()
+})
+
+for (const surface of ['desktop', 'terminal'] as const) {
+  test(`${surface}: rows sit a few px apart on the desktop, a whole row apart in a terminal`, async ($, on) => {
+    engine(on, { clock: false })
+    const clock = mock.clock(on, { now: NOW })
+    const fs = hostFs(on)
+    await start($)
+    for (const n of [1, 2, 3]) fs.put(sid(n), 'working', NOW - n * 1000, { title: `其他${n}` })
+    await clock.advance(2000)
+    const above = await $.ui.mount({ plugin: 'plan-progress', surface, component: 'AbovePrompt', props: ABOVE as never })
+    const spacers = (await above.findAll({ type: 'Svg' })).filter((el: any) => el.props.alt === '間距：列')
+    if (surface === 'desktop') {
+      // one spacer between each two of the three rows, 5 px tall, and no row gap besides
+      expect(spacers.length).toBe(2)
+      for (const sp of spacers) expect(sp.props.height).toBe(5)
+    } else expect(spacers.length).toBe(0)
+  })
+}
+
+test('desktop: two bars of this session sit one spacer apart, with no divider taking a second gap', async ($, on) => {
+  engine(on, { clock: false })
+  mock.clock(on, { now: NOW })
+  hostFs(on)
+  await start($)
+  await $.tool.call({ tool: TOOL, id: 'a', title: 'a', stages: STAGES } as never)
+  await $.tool.call({ tool: TOOL, id: 'b', title: 'b', stages: STAGES } as never)
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  const svgs = await above.findAll({ type: 'Svg' })
+  expect(svgs.filter((el: any) => el.props.alt === '間距：列').length).toBe(1)
+  expect(svgs.filter((el: any) => el.props.alt === '').length).toBe(0)
+})
+
+test('the longest title shows whole, even when its estimated width is not a whole number', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  await start($)
+  // Latin letters make the estimate 91.2 px: rounded down to 91, the title column was cut one letter short (0.5.68)
+  fs.put(sid(1), 'working', NOW - 10_000, { title: 'SOL跟單績效分析' })
+  fs.put(sid(2), 'working', NOW - 10_000, { title: '行情天眼優化' })
+  await clock.advance(2000)
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  expect((await above.find({ key: `switch-${sid(1)}` }))?.props.label).toBe('SOL跟單績效分析')
 })
 
 test('a session started after the band was folded opens folded', async ($, on) => {
