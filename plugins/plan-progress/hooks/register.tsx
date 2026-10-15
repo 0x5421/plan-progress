@@ -1336,28 +1336,21 @@ export const register: Register = on => {
           {Svg ? [<Svg key="agents-preview" source={agentsDrawn.svg} alt={`subagents ${view} preview`} width={W} height={agentsDrawn.height} />] : []}
         </Box>
 
-        {/* the running colour for every style. A desktop draws its native button and ignores a colour inside it, and a
-            drawing takes no press, so each choice is a dot of its colour (ringed when picked) beside the smallest button
-            that can take the press: 選, or ✓ on the picked one; the tiles below redraw in it */}
+        {/* the running colour for every style, one named button each. No colour dots: a desktop's native button ignores
+            a colour inside it and a drawing takes no press, so a dot could not be the thing pressed, and a dot that cannot
+            be pressed beside a word reads wrong (0.5.48-0.5.51 tried); the tiles below redraw in the colour */}
         <Box flexDirection="column" gap={1}>
           <Text bold>顏色</Text>
-          <Box key="accent-row" flexDirection="row" alignItems="center" gap={2} flexWrap="wrap">
+          <Box key="accent-row" flexDirection="row" alignItems="center" gap={1} flexWrap="wrap">
             {['', ...ACCENT_IDS].map(id => {
               const isPicked = id === pickedAccent
-              const hex = id && isAccentId(id) ? ACCENT_INFO[id].glyph : null
-              const dot = hex
-                ? `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">${isPicked ? `<circle cx="10" cy="10" r="9" fill="none" stroke="${hex}" stroke-width="1.6"/>` : ''}<circle cx="10" cy="10" r="${isPicked ? 6 : 7}" fill="${hex}"/></svg>`
-                : null
               return (
-                <Box key={`accent-${id || 'own'}`} flexDirection="row" alignItems="center" gap={1}>
-                  {dot && Svg && isAccentId(id) ? [<Svg key="dot" source={dot} alt={`顏色：${ACCENT_INFO[id].name}`} width={20} height={20} />] : []}
-                  <Button
-                    key={`use-accent-${id || 'own'}`}
-                    variant={isPicked ? 'primary' : 'secondary'}
-                    label={hex ? (isPicked ? '✓' : '選') : '跟樣式預設'}
-                    onPress={() => (isPicked ? undefined : setAccentChoice($, id))}
-                  />
-                </Box>
+                <Button
+                  key={`use-accent-${id || 'own'}`}
+                  variant={isPicked ? 'primary' : 'secondary'}
+                  label={isAccentId(id) ? ACCENT_INFO[id].name : '跟樣式預設'}
+                  onPress={() => (isPicked ? undefined : setAccentChoice($, id))}
+                />
               )
             })}
           </Box>

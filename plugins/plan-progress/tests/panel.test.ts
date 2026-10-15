@@ -969,16 +969,10 @@ test('the pane picks a colour, saved, and the bars redraw in it', async ($, on) 
   const props = { title: '進度條樣式', isFocused: true, bodyColumns: 50, placement: 'dock', scroll: SCROLL }
   const ui = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'Pane', requestId: PANE, props: props as never })
   expect((await ui.find({ key: 'use-accent-own' }))?.props.variant).toBe('primary')
-  // a desktop's native button ignores a colour inside it: each choice is a drawn dot of its colour beside a named button
-  // no names: the dot says the colour, the button beside it only takes the press
-  expect((await ui.find({ key: 'use-accent-teal' }))?.text).toBe('選')
-  const dotOf = async (id: string) => String((await ui.find({ key: `accent-${id}` }))?.children?.[0]?.props?.source ?? JSON.stringify(await ui.find({ key: `accent-${id}` })))
-  expect(await dotOf('teal')).toContain('#14A3A8')
+  // one named button per colour, and no colour dots beside them
+  expect((await ui.find({ key: 'use-accent-teal' }))?.text).toBe('青')
+  expect((await ui.findAll({ type: 'Svg' })).filter((el: any) => String(el.props.alt).startsWith('顏色：'))).toHaveLength(0)
   await ui.press({ key: 'use-accent-pink' })
-  // the picked dot gets a ring
-  expect(await dotOf('pink')).toContain('stroke="#D0548F"')
-  expect(await dotOf('teal')).not.toContain('stroke=')
-  expect((await ui.find({ key: 'use-accent-pink' }))?.text).toBe('✓')
   expect(host.store.get('accent')).toBe('pink')
   expect((await ui.find({ key: 'use-accent-pink' }))?.props.variant).toBe('primary')
   const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
