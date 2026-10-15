@@ -47,10 +47,16 @@ const args = process.argv.slice(2)
 const stillsArg = args.find(a => a.startsWith('--stills='))
 const STILLS = stillsArg ? stillsArg.slice('--stills='.length).split(',').map(Number) : null
 const OUT_DIR = args.find(a => !a.startsWith('--')) ?? new URL('./out-v2', import.meta.url).pathname
-const FRAMES = STILLS ? `${OUT_DIR}/stills` : `${OUT_DIR}/frames`
-const W = 1920
-const H = 1080
+// --tall renders the vertical cut (1080x1920) for phones and social feeds; the default is the landscape one
+const TALL = args.includes('--tall')
+const FRAMES = STILLS ? `${OUT_DIR}/stills${TALL ? '-tall' : ''}` : `${OUT_DIR}/frames${TALL ? '-tall' : ''}`
+const W = TALL ? 1080 : 1920
+const H = TALL ? 1920 : 1080
+// the caption band at the top, and the point the camera's view is centred on below it
+const CAP_H = TALL ? 300 : 150
+const Y0 = TALL ? (CAP_H + H) / 2 : H / 2 + 20
 const FPS = 60
+const OUT_NAME = TALL ? 'plan-progress-promo-tall.mp4' : 'plan-progress-promo-v2.mp4'
 const DURATION = 46
 
 // ---------- palette and type (the app's own tokens, as in make-video.mts) ----------
@@ -195,27 +201,27 @@ function agentsAt(t: number, now: number) {
 // the shop bar's step: one every 0.6 s from the first call, all ticked at stepLast
 const STEP_TIMES = Array.from({ length: SHOP_N - 1 }, (_, i) => T.barIn + 0.6 + i * ((T.stepLast - T.barIn - 0.8) / (SHOP_N - 1)))
 const shopStepAt = (t: number) => (t >= T.stepLast ? SHOP_N : STEP_TIMES.filter(x => x <= t).length)
-const styleAt = (t: number): StyleKey => (t < T.beadsClick ? 'segments' : 'beads')
+const styleAt = (t: number): StyleKey => (t < T.beadsClick ? 'beads' : 'grid')
 const accentAt = (t: number) => (t < T.tealClick ? null : 'teal')
 const REPLY = '重構完成：四個階段都跑完，測試全數通過。'
 const replyAt = (t: number) => REPLY.slice(0, Math.round(REPLY.length * clamp((t - T.replyFrom) / (T.replyTo - T.replyFrom))))
 
 // ---------- layout ----------
-const WIN = { x: 150, y: 170, w: 1620, h: 830 }
+const WIN = TALL ? { x: 40, y: 340, w: 1000, h: 1420 } : { x: 150, y: 170, w: 1620, h: 830 }
 const WIN_B = WIN.y + WIN.h
 const TITLE_H = 66
-const SIDE_W = 330
+const SIDE_W = TALL ? 290 : 330
 const MAIN_X = WIN.x + SIDE_W
 const MAIN_W = WIN.w - SIDE_W
-const COL_X = MAIN_X + 60
-const COL_W = MAIN_W - 120
+const COL_X = MAIN_X + (TALL ? 30 : 60)
+const COL_W = MAIN_W - (TALL ? 60 : 120)
 const COL_R = COL_X + COL_W
 const INPUT_H = 58
 const INPUT_TOP = WIN_B - 52 - INPUT_H
 const FOOT_Y = WIN_B - 22
 const BAND_PAD_X = 16
 const BAND_PAD_Y = 12
-const UI_S = 1.45 // the plugin draws in CSS px; the band is shown a little larger than life so it reads on video
+const UI_S = TALL ? 1.2 : 1.45 // the plugin draws in CSS px; the band is shown a little larger than life so it reads on video
 const IN_W = (COL_W - 2 * BAND_PAD_X) / UI_S
 const GEAR_W = 24 // the gear's column at the band's right (3 cells)
 const ROW_H = 34
@@ -262,7 +268,11 @@ function viewOf(which: Which, t: number, now: number) {
 const titleColW = (v: ReturnType<typeof viewOf>) => Math.max(textW(v.own.title, 13), ...v.away.map(r => textW(r.title, 13)))
 const barXOf = (v: ReturnType<typeof viewOf>) => 18 + titleColW(v) + 14
 const RIGHT_W = 52
-const barWOf = (v: ReturnType<typeof viewOf>) => IN_W - GEAR_W - barXOf(v) - RIGHT_W - 22
+// the right edge of a row: the frame's line, then the ✕ cell and the count column inside it
+const ROW_R = IN_W - GEAR_W - 6
+const CLOSE_X = ROW_R - 14
+const COUNT_R = ROW_R - 30
+const barWOf = (v: ReturnType<typeof viewOf>) => COUNT_R - RIGHT_W - 10 - barXOf(v)
 
 // the rows inside the band (UI units from the band's inner top)
 function layout(t: number, which: Which) {
@@ -272,7 +282,8 @@ function layout(t: number, which: Which) {
   const look = STYLES[styleAt(t)]
   const barW = barWOf(v)
   const ownD = look.draw(v.own as never, barW, now, v.agents)
-  const ownH = Math.max(ROW_H, ownD.height + 12)
+  const trackH = look.draw({ ...v.own, agents: undefined } as never, barW, now, null).height
+  const ownH = Math.max(ROW_H, ROW_H / 2 + trackH / 2 + (ownD.height - trackH) + 6)
   const framed = v.appear > 0
   const framePad = framed ? FRAME_PAD * v.appear : 0
   const ownTop = framePad
@@ -290,7 +301,7 @@ const rowPt = (t: number, which: Which, key: string): Pt => {
   const r = L.v.away[i]
   return { x: COL_X + BAND_PAD_X + (18 + textW(r.title, 13) / 2) * UI_S, y: bandTopOf(t, which) + BAND_PAD_Y + y * UI_S }
 }
-const gearPt = (t: number, which: Which): Pt => ({ x: COL_X + BAND_PAD_X + (IN_W - GEAR_W / 2) * UI_S, y: bandTopOf(t, which) + BAND_PAD_Y + (layout(t, which).ownTop + ROW_H / 2) * UI_S })
+const gearPt = (t: number, which: Which): Pt => ({ x: COL_X + BAND_PAD_X + (IN_W - GEAR_W / 2 - 3) * UI_S, y: bandTopOf(t, which) + BAND_PAD_Y + (layout(t, which).ownTop + ROW_H / 2) * UI_S })
 
 // ---------- the band: this session's bars (framed, its name on the line), the others under them, the gear ----------
 function band(t: number, which: Which, hot: string | null): string {
@@ -304,12 +315,14 @@ function band(t: number, which: Which, hot: string | null): string {
   const glyph = look.glyph(p as never)
   const rowY = (y: number, hh: number) => y + hh / 2
   const cyOwn = rowY(L.ownTop, ROW_H)
-  const ownBar = `<g transform="translate(${L.barX} ${L.ownTop + (ROW_H - Math.min(L.ownD.height, ROW_H)) / 2})">${drawnAt(lastOf(t, ownRedraws), L.ownD.svg)}</g>`
+  // the bar's own track (its height with no strips) is centred on the row's middle; strips hang below it
+  const trackH = look.draw({ ...p, agents: undefined } as never, L.barW, now, null).height
+  const ownBar = `<g transform="translate(${L.barX} ${cyOwn - trackH / 2})">${drawnAt(lastOf(t, ownRedraws), L.ownD.svg)}</g>`
   const parts: string[] = []
   if (L.framed) {
     const fy = L.ownTop - L.framePad * 0.6
     const fh = L.ownH + L.framePad * 1.2
-    parts.push(`<rect x="-6" y="${fy}" width="${IN_W - GEAR_W + 2}" height="${fh}" rx="10" fill="none" stroke="#000" stroke-opacity="${0.16 * v.appear}" stroke-width="1"/>`)
+    parts.push(`<rect x="-8" y="${fy}" width="${ROW_R + 8}" height="${fh}" rx="10" fill="none" stroke="#000" stroke-opacity="${0.16 * v.appear}" stroke-width="1"/>`)
     // this session's name on the frame's top line, the plugin's own drawing
     const name = P.frameNameSvg(SESSIONS[which].title)
     parts.push(`<g opacity="${v.appear}" transform="translate(6 ${fy - P.FRAME_ROW_PX})">${name.svg}</g>`)
@@ -317,10 +330,10 @@ function band(t: number, which: Which, hot: string | null): string {
   parts.push(glyph ? `<g transform="translate(0 ${cyOwn - 8})">${P.glyphSvg(glyph.char, glyph.color)}</g>` : '')
   parts.push(text(18, cyOwn + 4.5, p.title, 13))
   parts.push(ownBar)
-  parts.push(text(IN_W - GEAR_W - 24, cyOwn + 4.5, look.right(p as never, now), 12, { fill: MUTED, anchor: 'end' }))
-  parts.push(text(IN_W - GEAR_W - 8, cyOwn + 4.5, '✕', 11, { fill: INK2, anchor: 'middle' }))
+  parts.push(text(COUNT_R, cyOwn + 4.5, look.right(p as never, now), 12, { fill: MUTED, anchor: 'end' }))
+  parts.push(text(CLOSE_X, cyOwn + 4.5, '✕', 11, { fill: INK2, anchor: 'middle' }))
   // the gear: its own column at the top right, a small native button
-  const gx = IN_W - GEAR_W / 2
+  const gx = ROW_R + (IN_W - ROW_R) / 2
   const gearHot = t > T.gearClick - 0.25 && t < T.gearClick + 0.4
   parts.push(`<rect x="${gx - 9}" y="${cyOwn - 9}" width="18" height="18" rx="4" fill="${gearHot ? '#E2DCD6' : NATIVE}"/>`)
   parts.push(text(gx, cyOwn + 4, '⚙︎', 11, { fill: gearHot ? CLAY : '#92928F', anchor: 'middle' }))
@@ -353,8 +366,8 @@ function band(t: number, which: Which, hot: string | null): string {
           g ? `<g transform="translate(0 ${cy - 8})">${g}</g>` : '',
           text(18, cy + 4.5, r.title, 13, { fill: isHot ? CLAY : INK, weight: isHot ? 600 : 400 }),
           body,
-          text(IN_W - GEAR_W - 24, cy + 4.5, right, 12, { fill: MUTED, anchor: 'end' }),
-          r.kind === 'run' ? '' : text(IN_W - GEAR_W - 8, cy + 4.5, '✕', 11, { fill: INK2, anchor: 'middle' }),
+          text(COUNT_R, cy + 4.5, right, 12, { fill: MUTED, anchor: 'end' }),
+          r.kind === 'run' ? '' : text(CLOSE_X, cy + 4.5, '✕', 11, { fill: INK2, anchor: 'middle' }),
         ].join('')
       })
       .join('')
@@ -518,12 +531,12 @@ function pane(t: number): string {
 
 // ---------- camera: one cue at a time, a slow push in on what the caption talks about ----------
 type Cam = { s: number; cx: number; cy: number }
-const WIDE: Cam = { s: 1, cx: W / 2, cy: H / 2 + 20 }
+const WIDE: Cam = { s: 1, cx: W / 2, cy: Y0 }
 // where the camera rests, at key times; between two keys it eases from one to the next, and holds after the last
 const bandCam = (w: Which, at: number, s: number, lift = 40): Cam => ({ s, cx: COL_X + COL_W / 2, cy: bandTopOf(at, w) + bandHOf(at, w) / 2 - lift })
-const replyCam = (): Cam => ({ s: 1.3, cx: COL_X + COL_W / 2, cy: 624 })
+const replyCam = (): Cam => (TALL ? { s: 1.25, cx: COL_X + COL_W / 2, cy: (WIN.y + TITLE_H + 160 + bandTopOf(T.replyTo, 'shop') + 60) / 2 } : { s: 1.3, cx: COL_X + COL_W / 2, cy: 624 })
 // the pane centred, its top just under the caption
-const paneCam = (): Cam => ({ s: 1.25, cx: P_X + ((P_W + 2 * P_PAD) * P_SCALE) / 2, cy: P_TOP + 320 })
+const paneCam = (): Cam => ({ s: 1.25, cx: P_X + ((P_W + 2 * P_PAD) * P_SCALE) / 2, cy: P_TOP + (Y0 - CAP_H - 14) / 1.25 })
 function camKeys(t: number): [number, Cam][] {
   return [
     [0, WIDE],
@@ -559,16 +572,16 @@ function camAt(t: number): Cam {
   }
   return WIDE
 }
-const camTransform = (c: Cam) => `translate(${W / 2} ${H / 2 + 20}) scale(${c.s}) translate(${-c.cx} ${-c.cy})`
-const toScreen = (c: Cam, p: Pt): Pt => ({ x: W / 2 + (p.x - c.cx) * c.s, y: H / 2 + 20 + (p.y - c.cy) * c.s })
+const camTransform = (c: Cam) => `translate(${W / 2} ${Y0}) scale(${c.s}) translate(${-c.cx} ${-c.cy})`
+const toScreen = (c: Cam, p: Pt): Pt => ({ x: W / 2 + (p.x - c.cx) * c.s, y: Y0 + (p.y - c.cy) * c.s })
 
 // ---------- cursor ----------
 function cursor(t: number): string {
-  const home = { x: 1500, y: 980 }
+  const home = TALL ? { x: 900, y: 1820 } : { x: 1500, y: 980 }
   const bot = toScreen(camAt(T.botClick), rowPt(T.botClick - 0.001, 'shop', 'bot'))
   const gear = toScreen(camAt(T.gearClick), gearPt(T.gearClick, 'bot'))
   const L = paneLayout(NOW0)
-  const beadsB = L.useBtn(2, false)
+  const beadsB = L.useBtn(5, false)
   const beads = toScreen(camAt(T.beadsClick), inPane({ x: beadsB.x + btnW('使用') / 2, y: beadsB.y + 12 }))
   const teal = toScreen(camAt(T.tealClick), inPane({ x: accentX(4) + btnW('青') / 2, y: COLOR_Y + 8 + 12 }))
   const close = toScreen(camAt(T.closeClick), inPane({ x: P_W - btnW('儲存並關閉') / 2, y: 22 + 12 }))
@@ -608,7 +621,7 @@ function hookCard(t: number): string {
   if (o <= 0) return ''
   // a spinner line with nothing else: what a long task looks like without the plugin
   const dots = [0, 1, 2].map(i => `<circle cx="${W / 2 - 150 + i * 16}" cy="${H / 2 + 90}" r="5" fill="${CLAY}" opacity="${0.35 + 0.65 * ((Math.sin(t * 6 - i) + 1) / 2)}"/>`).join('')
-  return `<g opacity="${o}">${text(W / 2, H / 2 - 30, 'Claude 正在做事。', 64, { weight: 700, anchor: 'middle' })}${text(W / 2, H / 2 + 40, '但做到哪了？還要多久？', 44, { fill: MUTED, anchor: 'middle' })}${dots}${text(W / 2 - 104, H / 2 + 98, 'Working…', 22, { fill: MUTED })}</g>`
+  return `<g opacity="${o}">${text(W / 2, H / 2 - 30, 'Claude 正在做事。', TALL ? 72 : 64, { weight: 700, anchor: 'middle' })}${text(W / 2, H / 2 + 40, '但做到哪了？還要多久？', 44, { fill: MUTED, anchor: 'middle' })}${dots}${text(W / 2 - 104, H / 2 + 98, 'Working…', 22, { fill: MUTED })}</g>`
 }
 function titleCard(t: number): string {
   const o = fade(t, T.titleIn, T.titleIn + 0.5, T.titleOut - 0.4, T.titleOut)
@@ -637,7 +650,11 @@ function frame(t: number): string {
     const cam = camAt(t)
     parts.push(`<g opacity="${uiO}"><g transform="${camTransform(cam)}">${appWindow(t, hot)}${paneO > 0 ? `<g opacity="${paneO}" transform="translate(0 ${paneDy})">${pane(t)}</g>` : ''}</g>`)
     // the caption sits on a soft band at the top, over the window when the camera is in close
-    parts.push(`<g opacity="${capO}"><rect x="0" y="0" width="${W}" height="150" fill="${BG}"/>${text(W / 2, 74, cap, 50, { weight: 700, anchor: 'middle' })}${text(W / 2, 122, sub, 26, { fill: MUTED, anchor: 'middle' })}</g>`)
+    parts.push(
+      TALL
+        ? `<g opacity="${capO}"><rect x="0" y="0" width="${W}" height="${CAP_H}" fill="${BG}"/>${text(W / 2, 170, cap, 62, { weight: 700, anchor: 'middle' })}${text(W / 2, 236, sub, 30, { fill: MUTED, anchor: 'middle' })}</g>`
+        : `<g opacity="${capO}"><rect x="0" y="0" width="${W}" height="${CAP_H}" fill="${BG}"/>${text(W / 2, 74, cap, 50, { weight: 700, anchor: 'middle' })}${text(W / 2, 122, sub, 26, { fill: MUTED, anchor: 'middle' })}</g>`,
+    )
     parts.push(soundCue(t), `</g>`)
   }
   parts.push(cursor(t), endCard(t))
@@ -720,10 +737,115 @@ function soundtrack(): Float32Array[] {
     return Float32Array.from({ length: (buf.length - at) >> 1 }, (_, i) => buf.readInt16LE(at + i * 2) / 32768)
   }
   const click = () => highpass(make(0.04, t => (noise() * 0.6 + Math.sin(2 * Math.PI * 2400 * t)) * env(t, 0.0005, 0.006)), 900)
+  // the music goes in first, under everything: written here, not taken from anywhere, so the clip carries no licence
+  if (!NO_MUSIC) {
+    const [mL, mR] = music(n)
+    for (let i = 0; i < n; i++) (L[i] += mL[i]), (R[i] += mR[i])
+  }
   for (const c of CLICKS) add(c, click(), 0.45)
   add(T.allDone, readWav('done'), 1)
   const peak = [L, R].reduce((m, ch) => ch.reduce((mm, v) => Math.max(mm, Math.abs(v)), m), 0)
   if (peak > 0.89) for (let i = 0; i < n; i++) (L[i] *= 0.89 / peak), (R[i] *= 0.89 / peak)
+  return [L, R]
+}
+// a quiet, warm loop at 96 bpm: a soft pad on Cmaj7, Am7, Fmaj7, G6, a plucked arpeggio from the title on, a low
+// soft kick and a light shaker once the demos start, a lift on the end card; it ducks under the done sound and fades out
+const NO_MUSIC = args.includes('--no-music')
+function music(n: number): Float32Array[] {
+  const L = new Float32Array(n)
+  const R = new Float32Array(n)
+  const BPM = 96
+  const beat = 60 / BPM
+  const bar = 4 * beat
+  const hz = (m: number) => 440 * Math.pow(2, (m - 69) / 12)
+  // midi notes of each chord, one chord per bar
+  const CHORDS = [
+    [48, 55, 59, 64, 67], // Cmaj7
+    [45, 52, 55, 60, 64], // Am7
+    [41, 48, 52, 57, 64], // Fmaj7
+    [43, 50, 55, 59, 64], // G6
+  ]
+  let seed = 11
+  const noise = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648) * 2 - 1
+  const put = (i: number, v: number, pan = 0) => {
+    if (i < 0 || i >= n) return
+    L[i] += v * (1 - Math.max(0, pan))
+    R[i] += v * (1 + Math.min(0, pan))
+  }
+  // the pad: each chord's notes as soft triangles with a slow swell, detuned a hair left and right
+  const tri = (ph: number) => 2 * Math.abs(2 * (ph - Math.floor(ph + 0.5))) - 1
+  const bars = Math.ceil(DURATION / bar)
+  for (let b = 0; b < bars; b++) {
+    const notes = CHORDS[b % 4]
+    const t0 = b * bar
+    const len = Math.round((bar + 0.6) * SR)
+    for (let k = 0; k < len; k++) {
+      const t = k / SR
+      const e = Math.min(1, t / 0.9) * Math.min(1, (bar + 0.6 - t) / 0.6)
+      let vl = 0
+      let vr = 0
+      for (const m of notes) {
+        const f = hz(m + 12)
+        vl += tri(f * 0.998 * (t0 + t))
+        vr += tri(f * 1.002 * (t0 + t))
+      }
+      const i = Math.round((t0 + t) * SR)
+      if (i < n) (L[i] += vl * e * 0.018), (R[i] += vr * e * 0.018)
+    }
+  }
+  // the pluck: an eighth-note arpeggio up the chord, from the title card to the end card
+  const pluck = (at: number, m: number, gain: number, pan: number) => {
+    const f = hz(m)
+    const len = Math.round(0.9 * SR)
+    const o = Math.round(at * SR)
+    for (let k = 0; k < len; k++) {
+      const t = k / SR
+      const v = (Math.sin(2 * Math.PI * f * t) + 0.35 * Math.sin(4 * Math.PI * f * t) + 0.12 * Math.sin(6 * Math.PI * f * t)) * Math.exp(-t / 0.28) * Math.min(1, t / 0.004)
+      put(o + k, v * gain, pan)
+    }
+  }
+  const ARP = [0, 2, 3, 4, 3, 2, 1, 2]
+  for (let at = T.titleIn; at < T.uiOut + 4; at += beat / 2) {
+    const b = Math.floor(at / bar)
+    const step = Math.round((at - T.titleIn) / (beat / 2))
+    const m = CHORDS[b % 4][ARP[step % ARP.length]] + 12
+    pluck(at, m, 0.05, step % 2 ? 0.3 : -0.3)
+  }
+  // a soft kick on beats 1 and 3, a shaker on the off-beats, while the demos run
+  const kick = (at: number) => {
+    const o = Math.round(at * SR)
+    for (let k = 0; k < 0.35 * SR; k++) {
+      const t = k / SR
+      put(o + k, Math.sin(2 * Math.PI * (52 + 70 * Math.exp(-t / 0.04)) * t) * Math.exp(-t / 0.14) * 0.16)
+    }
+  }
+  const shaker = (at: number, pan: number) => {
+    const o = Math.round(at * SR)
+    let y = 0
+    for (let k = 0; k < 0.07 * SR; k++) {
+      const t = k / SR
+      const x = noise()
+      y += 0.6 * (x - y)
+      put(o + k, (x - y) * Math.exp(-t / 0.02) * 0.035, pan)
+    }
+  }
+  for (let at = T.uiIn; at < T.uiOut; at += beat) {
+    const i = Math.round((at - T.uiIn) / beat)
+    if (i % 2 === 0) kick(at)
+    if (at > T.crossIn) shaker(at + beat / 2, i % 2 ? 0.4 : -0.4)
+  }
+  // a bell on the title and on the end card
+  for (const at of [T.titleIn, T.endIn]) for (const m of [72, 76, 79, 84]) pluck(at + (m - 72) * 0.012, m, 0.07, 0)
+  // the level over time: in from silence, under the done sound for a moment, out over the last seconds
+  for (let i = 0; i < n; i++) {
+    const t = i / SR
+    const fadeIn = Math.min(1, t / 1.5)
+    const fadeOut = Math.min(1, (DURATION - t) / 3)
+    const duck = 1 - 0.6 * Math.max(0, Math.min(1, (t - (T.allDone - 0.15)) / 0.15)) * Math.max(0, Math.min(1, (T.allDone + 1.6 - t) / 0.5))
+    const g = fadeIn * Math.max(0, fadeOut) * duck
+    L[i] *= g
+    R[i] *= g
+  }
   return [L, R]
 }
 function writeWav(path: string, [L, R]: Float32Array[]) {
@@ -756,12 +878,17 @@ if (probe) {
   process.exit(0)
 }
 mkdirSync(OUT_DIR, { recursive: true })
+if (args.includes('--audio-only')) {
+  writeWav(`${OUT_DIR}/soundtrack-check.wav`, soundtrack())
+  console.log(`audio: ${OUT_DIR}/soundtrack-check.wav`)
+  process.exit(0)
+}
 await capture()
 if (STILLS) {
   console.log(`stills: ${FRAMES}`)
 } else {
-  const audio = `${OUT_DIR}/soundtrack.wav`
+  const audio = `${OUT_DIR}/soundtrack${TALL ? '-tall' : ''}.wav`
   writeWav(audio, soundtrack())
-  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', `${FRAMES}/f%04d.png`, '-i', audio, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '16', '-preset', 'slow', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', `${OUT_DIR}/plan-progress-promo-v2.mp4`], { stdio: 'inherit' })
-  console.log(`done: ${OUT_DIR}/plan-progress-promo-v2.mp4`)
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', `${FRAMES}/f%04d.png`, '-i', audio, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '16', '-preset', 'slow', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', `${OUT_DIR}/${OUT_NAME}`], { stdio: 'inherit' })
+  console.log(`done: ${OUT_DIR}/${OUT_NAME}`)
 }
