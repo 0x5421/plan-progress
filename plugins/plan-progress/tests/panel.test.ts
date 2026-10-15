@@ -847,6 +847,20 @@ test('the fold button folds the band to a lone button that opens it, and the cho
   for (const key of ['title-mine', `switch-${sid(1)}`, `switch-${sid(2)}`]) expect(await has(all, key)).toBe(true)
 })
 
+test('with no bar of this session own there is no frame, and no grey behind the fold button to cover the first row', async ($, on) => {
+  engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  await start($)
+  fs.put(sid(1), 'working', NOW - 10_000, { title: '其他一' })
+  fs.put(sid(2), 'working', NOW - 10_000, { title: '其他二' })
+  await clock.advance(2000)
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  expect(await above.find({ key: 'own-frame' })).toBeUndefined()
+  expect((await above.find({ key: 'band-fold-button' }))?.props.label).toBe('⌃')
+  expect((await above.find({ key: 'band-fold-front' }))?.props.backgroundColor).toBeUndefined()
+})
+
 test('a session started after the band was folded opens folded', async ($, on) => {
   engine(on, { clock: false, saved: { collapsed: true }, theme: 'dark-daltonized' })
   const clock = mock.clock(on, { now: NOW })

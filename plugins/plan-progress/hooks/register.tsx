@@ -1632,7 +1632,9 @@ export const register: Register = on => {
           // one row up the button showed only its bottom, cut by the band's edge (0.5.57); two rows tall from there with
           // the button at its middle, as the frame's name is drawn, its middle sits on the tree's top edge
           <Box key="band-fold" position="absolute" top={-1} height={2} width={foldCells} flexDirection="column" justifyContent="center" alignItems="center" left={Math.max(0, Math.floor((e.props.bodyColumns || 100) / 2) - Math.floor(foldCells / 2))}>
-            <Box key="band-fold-front" width={foldCells} justifyContent="center" backgroundColor={isDarkTheme ? BAND_GREY.dark : BAND_GREY.light}>
+            {/* the grey only where a frame's line runs under it: with no frame the first row starts right there, and the
+                grey covered the top of its text (0.5.63) */}
+            <Box key="band-fold-front" width={foldCells} justifyContent="center" {...(isFramed ? { backgroundColor: isDarkTheme ? BAND_GREY.dark : BAND_GREY.light } : {})}>
               {foldButton}
             </Box>
           </Box>
