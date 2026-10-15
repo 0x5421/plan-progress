@@ -57,6 +57,8 @@ declare module 'claude-code' {
       crossSessions: boolean
       // the running colour picked in the pane, one of ACCENT_IDS in hooks/styles.ts, or '' for each style's own; also in $.store
       accent: string
+      // whether the band is folded to one row; also in $.store
+      collapsed: boolean
     }
   }
 }

@@ -575,7 +575,7 @@ test('rows line up: titles are all plain buttons, the text right of the bars sit
   expect(own?.text).toBe(fits)
   expect((await above.find({ key: 'title-long' }))?.text).toMatch(/…$/)
   // 0% beside 100%: the column is as wide as the widest text plus one cell, in every row
-  const cols = (await above.findAll({ type: 'Box' })).filter((el: any) => el.props.justifyContent === 'flex-end' && el.props.key !== 'band-gear')
+  const cols = (await above.findAll({ type: 'Box' })).filter((el: any) => el.props.justifyContent === 'flex-end' && el.props.key !== 'band-gear' && el.props.key !== 'band-fold')
   expect(cols.length).toBe(3)
   expect(new Set(cols.map((el: any) => el.props.width))).toEqual(new Set([5]))
   await above.unmount()
@@ -805,6 +805,65 @@ for (const surface of ['desktop', 'terminal'] as const) {
     await both.unmount()
   })
 }
+
+test('the fold button keeps one row, the one that waits on the person first, and a new session starts folded', async ($, on) => {
+  const host = engine(on, { clock: false })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  await start($)
+  await $.tool.call({ tool: TOOL, id: 'mine', title: 'mine', stages: STAGES } as never)
+  const mount = () => $.ui.mount({ plugin: 'plan-progress', surface: 'desktop', component: 'AbovePrompt', props: ABOVE as never })
+  // one row: nothing to fold, no button
+  const alone = await mount()
+  expect(await alone.find({ key: 'band-fold-button' })).toBeUndefined()
+  await alone.unmount()
+  fs.put(sid(1), 'working', NOW - 10_000, { title: '其他一' })
+  fs.put(sid(2), 'done', NOW - 20_000, { title: '其他二' })
+  await clock.advance(2000)
+  const open = await mount()
+  expect((await open.find({ key: 'band-fold-button' }))?.props.label).toBe('▴')
+  expect(await open.find({ key: 'own-frame' })).toBeDefined()
+  await open.press({ key: 'band-fold-button' })
+  await open.unmount()
+  expect(host.store.get('collapsed')).toBe(true)
+  // folded: this session's newest bar alone, no frame, and the button counts the rows it hides
+  const folded = await mount()
+  const has = async (ui: any, key: string) => (await ui.find({ key })) !== undefined
+  expect(await has(folded, 'title-mine')).toBe(true)
+  expect(await has(folded, `switch-${sid(1)}`)).toBe(false)
+  expect(await has(folded, `switch-${sid(2)}`)).toBe(false)
+  expect(await folded.find({ key: 'own-frame' })).toBeUndefined()
+  expect((await folded.find({ key: 'band-fold-button' }))?.props.label).toBe('▾ 2')
+  await folded.unmount()
+  // another session waiting on the person takes the one row
+  fs.put(sid(3), 'needs_input', NOW - 5_000, { title: '等你決定的' })
+  await clock.advance(2000)
+  const waiting = await mount()
+  expect(await has(waiting, `switch-${sid(3)}`)).toBe(true)
+  expect(await has(waiting, 'title-mine')).toBe(false)
+  await waiting.unmount()
+  // pressed again, every row is back
+  const again = await mount()
+  await again.press({ key: 'band-fold-button' })
+  await again.unmount()
+  expect(host.store.get('collapsed')).toBe(false)
+  const all = await mount()
+  for (const n of [1, 2, 3]) expect(await has(all, `switch-${sid(n)}`)).toBe(true)
+  expect(await has(all, 'title-mine')).toBe(true)
+})
+
+test('a session started after the band was folded opens folded', async ($, on) => {
+  engine(on, { clock: false, saved: { collapsed: true } })
+  const clock = mock.clock(on, { now: NOW })
+  const fs = hostFs(on)
+  await start($)
+  await $.tool.call({ tool: TOOL, id: 'mine', title: 'mine', stages: STAGES } as never)
+  fs.put(sid(1), 'working', NOW - 10_000, { title: '其他一' })
+  await clock.advance(2000)
+  const above = await $.ui.mount({ plugin: 'plan-progress', surface: 'terminal', component: 'AbovePrompt', props: ABOVE as never })
+  expect((await above.find({ key: 'band-fold-button' }))?.props.label).toBe('▾ 1')
+  expect(await above.find({ key: `switch-${sid(1)}` })).toBeUndefined()
+})
 
 test('a session publishes the tool its main loop runs now, and clears it when the turn ends', async ($, on) => {
   engine(on, { clock: false })

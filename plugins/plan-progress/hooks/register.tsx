@@ -37,6 +37,15 @@ const setStyle = async ($: EngineInterface, id: StyleId) => {
   await update($, barStyle, () => id)
   await $.store.set(STYLE_STORE_KEY, id)
 }
+// whether the band shows one row instead of all of them; kept in $.store too, so a new session starts folded
+const isCollapsed = atom({ plugin: 'plan-progress', key: 'collapsed' } as const, false)
+const COLLAPSED_STORE_KEY = 'collapsed'
+const setCollapsed = async ($: EngineInterface, collapsed: boolean) => {
+  await update($, isCollapsed, () => collapsed)
+  await $.store.set(COLLAPSED_STORE_KEY, collapsed)
+}
+// the fold button left of the gear: ▴ folds the band to one row, ▾ and the number of rows hidden opens it again
+const FOLD_CELLS = 5
 // the pane that lists every style with a live preview; opened from the ⚙ beside the Progress button
 const STYLE_PANE = 'plan-progress-styles'
 const STYLE_PANE_TITLE = '進度條樣式'
@@ -1115,6 +1124,8 @@ export const register: Register = on => {
     if (typeof savedShown === 'boolean') await update($, isOpen, () => savedShown)
     const savedSounds = await $.store.get(SOUNDS_STORE_KEY)
     if (typeof savedSounds === 'boolean') await update($, soundsOn, () => savedSounds)
+    const savedCollapsed = await $.store.get(COLLAPSED_STORE_KEY)
+    if (typeof savedCollapsed === 'boolean') await update($, isCollapsed, () => savedCollapsed)
     const savedCross = await $.store.get(CROSS_STORE_KEY)
     if (typeof savedCross === 'boolean') await update($, crossOn, () => savedCross)
     // a desktop session names itself in its environment; a terminal session has no id to switch to and only reads
@@ -1408,10 +1419,20 @@ export const register: Register = on => {
       return name ? `${r.folder} · ${name}` : r.folder
     }
     if ((list.length === 0 && !hasAway) || e.props.hasSurvey || !(await read($, isOpen))) return next(e)
+    // folded, the band keeps one row: what waits on the person or failed (this session's first), else this session's
+    // newest bar, else the first other session; the fold button says how many rows it hides
+    const rowCount = list.length + away.rows.length
+    const canFold = rowCount > 1
+    const isFolded = canFold && (await read($, isCollapsed))
+    const urgentOwn = list.find(p => p.state === 'needs_input' || p.state === 'error')
+    const urgentAway = away.rows.find(r => r.state === 'needs_input')
+    const foldedOwn = urgentOwn ?? (urgentAway ? undefined : list[list.length - 1])
+    const ownShown = isFolded ? (foldedOwn ? [foldedOwn] : []) : list
+    const awayShown = isFolded ? (foldedOwn ? [] : [urgentAway ?? away.rows[0]]) : shownAway
     const t = $.ui.resolve(e)
     const { Box, Button, Text } = t
     const Svg = 'Svg' in t ? t.Svg : null
-    const total = Math.max(320, ((e.props.bodyColumns || 100) - GEAR_CELLS) * 8)
+    const total = Math.max(320, ((e.props.bodyColumns || 100) - GEAR_CELLS - (canFold ? FOLD_CELLS : 0)) * 8)
     // every bar has the same width and is pinned to the right edge (fixed-width percent, close button),
     // so rows line up whatever their titles; the slack goes into the gap after the title.
     // Desktop reports ~8 CSS px per column; glyph, gaps, percent and the close button take ~126 px.
@@ -1431,7 +1452,7 @@ export const register: Register = on => {
     // the hairline's elapsed time is wider than a percent
     // with other sessions under it, this session's own bars sit in a rounded frame; every row gives up the frame's width
     // (its border and padding) so the bars inside and outside it still line up
-    const isFramed = list.length > 0 && hasAway
+    const isFramed = ownShown.length > 0 && awayShown.length > 0
     // the desktop draws the glyph in a box of one width; a terminal's cells already line it up
     const glyphCell = (gl: { char: string; color: string }, isDim?: boolean) =>
       Svg && e.surface !== 'terminal' ? (
@@ -1460,7 +1481,7 @@ export const register: Register = on => {
     const lineW = total - frameSlack
     const divider = `<svg xmlns="http://www.w3.org/2000/svg" width="${lineW}" height="1"><rect width="${lineW}" height="1" fill="#808080" fill-opacity=".22"/></svg>`
 
-    const ownRows = list.flatMap((p, i) => {
+    const ownRows = ownShown.flatMap((p, i) => {
           const v = applyAgentView(visibleAgents(p, now), view)
           const drawn = drawBar(style, p, trackW, now, v)
           const isLeaving = Boolean(p.leavingAt)
@@ -1505,7 +1526,7 @@ export const register: Register = on => {
         })
     const awayRows = [
           // each other session as one bar row: its title is the button that switches to it
-          ...shownAway.map(r => {
+          ...awayShown.map(r => {
             const asState: PlanState = r.state === 'working' ? 'running' : r.state
             // a session waiting on the person shows its bar amber even when the bar itself still says running
             const p = r.bar ? { ...r.bar, state: r.state === 'needs_input' && r.bar.state === 'running' ? ('needs_input' as const) : r.bar.state } : null
@@ -1550,7 +1571,7 @@ export const register: Register = on => {
               </Box>
             )
           }),
-          ...(away.rows.length > MAX_OTHERS ? [<Text key="away-more" dimColor>{`還有 ${away.rows.length - MAX_OTHERS} 個 session`}</Text>] : []),
+          ...(!isFolded && away.rows.length > MAX_OTHERS ? [<Text key="away-more" dimColor>{`還有 ${away.rows.length - MAX_OTHERS} 個 session`}</Text>] : []),
         ]
 
     // the rows, and the gear at the top right in a column of its own beside them, so it takes no row
@@ -1580,6 +1601,13 @@ export const register: Register = on => {
             ]
           : [...ownRows, ...awayRows]}
       </Box>
+      {canFold ? (
+        <Box key="band-fold" width={FOLD_CELLS} justifyContent="flex-end">
+          <Button key="band-fold-button" plain dimColor label={isFolded ? `▾ ${rowCount - 1}` : '▴'} onPress={() => setCollapsed($, !isFolded)} />
+        </Box>
+      ) : (
+        []
+      )}
       <Box key="band-gear" width={GEAR_CELLS} justifyContent="flex-end">
         <Button key="progress-style" plain dimColor label={SETTINGS_GLYPH} onPress={() => openStyles($)} />
       </Box>
