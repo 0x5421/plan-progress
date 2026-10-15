@@ -227,6 +227,7 @@ const GEAR_W = 24 // the gear's column at the band's right (3 cells)
 const ROW_H = 34
 const ROW_GAP = 8
 const FRAME_PAD = 10
+const FRAME_LABEL = 13
 
 // ---------- sessions ----------
 type Which = 'shop' | 'bot'
@@ -286,10 +287,12 @@ function layout(t: number, which: Which) {
   const ownH = Math.max(ROW_H, ROW_H / 2 + trackH / 2 + (ownD.height - trackH) + 6)
   const framed = v.appear > 0
   const framePad = framed ? FRAME_PAD * v.appear : 0
-  const ownTop = framePad
-  const awayTop = ownTop + ownH + framePad + (framed ? ROW_GAP + 6 : 0)
-  const rowsH = v.away.length * (ROW_H + ROW_GAP)
-  const contentH = awayTop - (framed ? 0 : ROW_GAP + 6) + rowsH * v.appear
+  // the name sits on the frame's top line and sticks out above it, so leave it room under the band's edge
+  const ownTop = framePad + FRAME_LABEL * v.appear
+  // the gap and the rows under this session's row grow in together, so the band stays even top and bottom
+  const awayTop = ownTop + ownH + framePad + (ROW_GAP + 6) * v.appear
+  const rowsH = Math.max(0, v.away.length * (ROW_H + ROW_GAP) - ROW_GAP)
+  const contentH = awayTop + rowsH * v.appear
   return { v, look, now, barW, barX: barXOf(v), ownD, ownH, ownTop, awayTop, framed, framePad, contentH }
 }
 const bandHOf = (t: number, w: Which) => layout(t, w).contentH * UI_S + 2 * BAND_PAD_Y
