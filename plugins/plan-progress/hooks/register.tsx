@@ -1337,8 +1337,8 @@ export const register: Register = on => {
         </Box>
 
         {/* the running colour for every style. A desktop draws its native button and ignores a colour inside it, and a
-            drawing takes no press, so each choice is a dot of its colour (ringed when picked) beside a button with its
-            name; the tiles below redraw in it */}
+            drawing takes no press, so each choice is a dot of its colour (ringed when picked) beside the smallest button
+            that can take the press: 選, or ✓ on the picked one; the tiles below redraw in it */}
         <Box flexDirection="column" gap={1}>
           <Text bold>顏色</Text>
           <Box key="accent-row" flexDirection="row" alignItems="center" gap={2} flexWrap="wrap">
@@ -1354,7 +1354,7 @@ export const register: Register = on => {
                   <Button
                     key={`use-accent-${id || 'own'}`}
                     variant={isPicked ? 'primary' : 'secondary'}
-                    label={hex && isAccentId(id) ? ACCENT_INFO[id].name : '跟樣式預設'}
+                    label={hex ? (isPicked ? '✓' : '選') : '跟樣式預設'}
                     onPress={() => (isPicked ? undefined : setAccentChoice($, id))}
                   />
                 </Box>
